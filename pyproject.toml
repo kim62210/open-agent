@@ -1,0 +1,110 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "open-agent"
+dynamic = ["version"]
+requires-python = ">=3.13"
+description = "AI Agent Platform — LiteLLM + MCP + Skills"
+license = "MIT"
+authors = [{ name = "Brian Kim" }]
+keywords = ["ai", "agent", "mcp", "fastapi", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Framework :: AsyncIO",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "litellm>=1.55.0",
+    "click>=8.1.0",
+    "rich>=13.9.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.2",
+    "aiohttp>=3.11.0",
+    "httpx>=0.27.0",
+    "mcp>=1.2.0",
+    "structlog>=25.1.0",
+]
+
+[project.urls]
+Repository = "https://github.com/kim62210/open-agent"
+
+[project.scripts]
+open-agent = "open_agent.cli:main"
+
+[dependency-groups]
+dev = [{ include-group = "test" }, { include-group = "lint" }, "ipython"]
+lint = ["ruff>=0.8.0", "mypy>=1.13.0", "types-PyYAML"]
+test = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-timeout>=2.3.0",
+    "httpx",
+    "anyio[trio]",
+]
+
+[tool.hatch.version]
+path = "__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = [".", "nexus_rust"]
+
+[tool.hatch.build.targets.sdist]
+include = ["**/*.py", "static/**", "bundled_skills/**", "nexus_rust/**"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["nexus_rust/", ".venv/"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "ASYNC", "RUF", "FAST"]
+ignore = ["E501", "B008", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**" = ["B", "S"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = ["--strict-markers", "--tb=short", "-v"]
+timeout = 30
+markers = [
+    "integration: 외부 서비스 연동 테스트",
+    "slow: 실행 시간이 긴 테스트",
+]
+
+[tool.coverage.run]
+source = ["open_agent"]
+branch = true
+omit = ["tests/*", "nexus_rust/*"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+
+[tool.mypy]
+python_version = "3.13"
+strict = false
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["nexus_rust", "nexus_rust.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["litellm", "litellm.*"]
+ignore_missing_imports = true
