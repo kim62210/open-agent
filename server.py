@@ -20,8 +20,10 @@ from open_agent.core.memory_manager import memory_manager
 from open_agent.core.workspace_manager import workspace_manager
 from open_agent.core.job_manager import job_manager
 from open_agent.core.job_scheduler import job_scheduler
+from open_agent.core.logging import setup_logging
+from open_agent.api.middleware import RequestLoggingMiddleware
 
-logging.basicConfig(level=logging.INFO)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # 정적 파일 디렉토리 (wheel 내부)
@@ -112,6 +114,8 @@ else:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+app.add_middleware(RequestLoggingMiddleware)
 
 # 라우터 등록
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
