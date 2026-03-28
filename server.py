@@ -7,10 +7,26 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse  # JSONResponse imported above
 from fastapi.staticfiles import StaticFiles
 
+from fastapi.responses import JSONResponse
+
 from open_agent.api.endpoints import chat, mcp as mcp_router, skills as skills_router, pages as pages_router, settings as settings_router, sessions as sessions_router, memory as memory_router, workspace as workspace_router, jobs as jobs_router, sandbox as sandbox_router
+from open_agent.core.exceptions import (
+    AlreadyExistsError,
+    InvalidPathError,
+    JobStateError,
+    LLMContextWindowError,
+    LLMError,
+    LLMRateLimitError,
+    MCPConnectionError,
+    OpenAgentError,
+    NotFoundError,
+    NotInitializedError,
+    PermissionDeniedError,
+    StorageLimitError,
+)
 from open_agent.core.mcp_manager import mcp_manager
 from open_agent.core.skill_manager import skill_manager
 from open_agent.core.page_manager import page_manager
@@ -90,6 +106,62 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Open Agent API", lifespan=lifespan)
+
+
+# ── 전역 예외 핸들러 ──
+
+
+def _register_exception_handlers(target_app: FastAPI) -> None:
+    @target_app.exception_handler(NotFoundError)
+    async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @target_app.exception_handler(AlreadyExistsError)
+    async def already_exists_handler(request: Request, exc: AlreadyExistsError) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @target_app.exception_handler(PermissionDeniedError)
+    async def permission_denied_handler(request: Request, exc: PermissionDeniedError) -> JSONResponse:
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    @target_app.exception_handler(InvalidPathError)
+    async def invalid_path_handler(request: Request, exc: InvalidPathError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @target_app.exception_handler(StorageLimitError)
+    async def storage_limit_handler(request: Request, exc: StorageLimitError) -> JSONResponse:
+        return JSONResponse(status_code=413, content={"detail": str(exc)})
+
+    @target_app.exception_handler(JobStateError)
+    async def job_state_handler(request: Request, exc: JobStateError) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @target_app.exception_handler(LLMRateLimitError)
+    async def llm_rate_limit_handler(request: Request, exc: LLMRateLimitError) -> JSONResponse:
+        return JSONResponse(status_code=429, content={"detail": str(exc)})
+
+    @target_app.exception_handler(LLMContextWindowError)
+    async def llm_context_handler(request: Request, exc: LLMContextWindowError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @target_app.exception_handler(LLMError)
+    async def llm_error_handler(request: Request, exc: LLMError) -> JSONResponse:
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+    @target_app.exception_handler(MCPConnectionError)
+    async def mcp_connection_handler(request: Request, exc: MCPConnectionError) -> JSONResponse:
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+    @target_app.exception_handler(NotInitializedError)
+    async def not_initialized_handler(request: Request, exc: NotInitializedError) -> JSONResponse:
+        return JSONResponse(status_code=500, content={"detail": "서버 내부 상태 오류"})
+
+    @target_app.exception_handler(OpenAgentError)
+    async def open_agent_fallback_handler(request: Request, exc: OpenAgentError) -> JSONResponse:
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+_register_exception_handlers(app)
 
 # CORS: 개발 모드에서만 전체 허용, 프로덕션에서는 localhost만 허용
 _dev_mode = os.environ.get("OPEN_AGENT_DEV") == "1"

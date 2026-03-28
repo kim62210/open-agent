@@ -3,6 +3,7 @@
 import asyncio
 import logging
 
+from open_agent.core.exceptions import JobNotFoundError
 from open_agent.core.job_manager import job_manager
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ async def execute_job(job_id: str) -> str:
 
     job = job_manager.get_job(job_id)
     if not job:
-        raise ValueError(f"Job not found: {job_id}")
+        raise JobNotFoundError(f"Job not found: {job_id}")
 
     logger.info(f"Executing job: {job.name} ({job_id})")
 

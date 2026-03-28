@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from open_agent.core.exceptions import InvalidPathError
 from open_agent.core.page_manager import page_manager
 from open_agent.core.workspace_manager import workspace_manager
 
@@ -641,7 +642,7 @@ def _handle_apply_patch(ctx: str, args: Dict[str, Any]) -> str:
         def page_path_validator(rel_path: str) -> Path:
             full = (page_dir / rel_path).resolve()
             if not full.is_relative_to(page_dir):
-                raise ValueError(f"Path traversal detected: {rel_path}")
+                raise InvalidPathError(f"Path traversal detected: {rel_path}")
             return full
 
         return apply_patch_to_files(patch_text, str(page_dir), path_validator=page_path_validator)

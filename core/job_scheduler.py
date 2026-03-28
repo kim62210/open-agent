@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from croniter import croniter
 
+from open_agent.core.exceptions import JobNotFoundError, JobStateError
 from open_agent.core.job_executor import execute_job
 from open_agent.core.job_manager import job_manager
 from open_agent.models.job import JobInfo
@@ -226,16 +227,16 @@ class JobScheduler:
         """수동 즉시 실행."""
         job = job_manager.get_job(job_id)
         if not job:
-            raise ValueError(f"Job not found: {job_id}")
+            raise JobNotFoundError(f"Job not found: {job_id}")
         if job_id in self._running_tasks:
-            raise ValueError(f"Job is already running: {job_id}")
+            raise JobStateError(f"Job is already running: {job_id}")
         self._spawn_job(job_id)
 
     async def stop_job(self, job_id: str) -> None:
         """실행 중인 Job을 취소합니다."""
         task = self._running_tasks.get(job_id)
         if not task:
-            raise ValueError(f"Job is not running: {job_id}")
+            raise JobStateError(f"Job is not running: {job_id}")
         task.cancel()
 
     def is_running(self, job_id: str) -> bool:

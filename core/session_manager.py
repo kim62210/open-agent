@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from open_agent.core.exceptions import NotInitializedError
 from open_agent.models.session import SessionInfo, SessionMessage
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ class SessionManager:
 
     def _messages_path(self, session_id: str) -> Path:
         if not self._sessions_dir:
-            raise ValueError("SessionManager not initialized")
+            raise NotInitializedError("SessionManager not initialized")
         return self._sessions_dir / f"{session_id}.json"
 
     def get_all(self) -> List[SessionInfo]:

@@ -195,9 +195,9 @@ async def upload_bundle(
             parent_id=parent_id,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 def _extract_zip(data: bytes) -> List[Tuple[str, bytes]]:
@@ -247,7 +247,7 @@ async def upload_page(
         data = await file.read()
         return page_manager.add_page(name, description, data, file.filename, parent_id=parent_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 class ImportPathRequest(BaseModel):
@@ -262,7 +262,7 @@ async def import_page_from_path(req: ImportPathRequest):
     try:
         return page_manager.add_page_from_path(req.name, req.description, req.path, parent_id=req.parent_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.patch("/{page_id}", response_model=PageInfo)
@@ -380,10 +380,7 @@ async def kv_get(page_id: str, key: str):
 async def kv_set(page_id: str, key: str, req: KVSetRequest):
     if not page_manager.get_page(page_id):
         raise HTTPException(status_code=404, detail="Page not found")
-    try:
-        page_manager.kv_set(page_id, key, req.value)
-    except ValueError as e:
-        raise HTTPException(status_code=413, detail=str(e))
+    page_manager.kv_set(page_id, key, req.value)
     return {"key": key, "value": req.value}
 
 

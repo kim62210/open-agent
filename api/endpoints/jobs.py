@@ -32,7 +32,7 @@ async def create_job(req: CreateJobRequest):
         job_scheduler.refresh_job(job.id)
         return job
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.patch("/{job_id}", response_model=JobInfo)
@@ -70,21 +70,15 @@ async def toggle_job(job_id: str):
 @router.post("/{job_id}/run")
 async def run_job(job_id: str):
     """수동 즉시 실행"""
-    try:
-        await job_scheduler.run_now(job_id)
-        return {"status": "started", "job_id": job_id}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    await job_scheduler.run_now(job_id)
+    return {"status": "started", "job_id": job_id}
 
 
 @router.post("/{job_id}/stop")
 async def stop_job(job_id: str):
     """실행 중인 Job 중지"""
-    try:
-        await job_scheduler.stop_job(job_id)
-        return {"status": "stopping", "job_id": job_id}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    await job_scheduler.stop_job(job_id)
+    return {"status": "stopping", "job_id": job_id}
 
 
 @router.get("/{job_id}/history", response_model=List[JobRunRecord])

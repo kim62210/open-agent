@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from open_agent.core.exceptions import (
+    AlreadyExistsError,
+    InvalidPathError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from open_agent.models.workspace import (
     EditFileRequest,
     FileContent,
@@ -74,7 +80,7 @@ class WorkspaceManager:
     def create_workspace(self, name: str, path: str, description: str = "") -> WorkspaceInfo:
         abs_path = Path(path).expanduser().resolve()
         if not abs_path.is_dir():
-            raise ValueError(f"Directory not found: {path}")
+            raise NotFoundError(f"Directory not found: {path}")
 
         wid = uuid.uuid4().hex[:8]
         workspace = WorkspaceInfo(
@@ -147,7 +153,7 @@ class WorkspaceManager:
     def _resolve_safe_path(self, workspace_id: str, relative_path: str) -> Path:
         ws = self._workspaces.get(workspace_id)
         if not ws:
-            raise ValueError(f"Workspace not found: {workspace_id}")
+            raise NotFoundError(f"Workspace not found: {workspace_id}")
         root = Path(ws.path).resolve()
         # 절대경로가 워크스페이스 내부이면 상대경로로 변환
         abs_candidate = Path(relative_path).resolve()
@@ -155,7 +161,7 @@ class WorkspaceManager:
             relative_path = str(abs_candidate.relative_to(root))
         target = (root / relative_path).resolve()
         if not target.is_relative_to(root):
-            raise ValueError("Path traversal detected")
+            raise InvalidPathError("Path traversal detected")
         return target
 
     def get_file_tree(
@@ -163,7 +169,7 @@ class WorkspaceManager:
     ) -> List[FileTreeNode]:
         target = self._resolve_safe_path(workspace_id, path)
         if not target.is_dir():
-            raise ValueError(f"Not a directory: {path}")
+            raise NotFoundError(f"Not a directory: {path}")
         ws = self._workspaces.get(workspace_id)
         root = Path(ws.path).resolve()  # type: ignore[union-attr]
         return self._scan_dir(target, root, max_depth, 0)
@@ -212,7 +218,7 @@ class WorkspaceManager:
     ) -> FileContent:
         target = self._resolve_safe_path(workspace_id, path)
         if not target.is_file():
-            raise ValueError(f"File not found: {path}")
+            raise NotFoundError(f"File not found: {path}")
 
         text = target.read_text(encoding="utf-8", errors="replace")
         lines = text.split('\n')
@@ -236,16 +242,16 @@ class WorkspaceManager:
         """바이너리 파일 서빙을 위한 경로 반환 (보안 검증 포함)."""
         target = self._resolve_safe_path(workspace_id, path)
         if not target.is_file():
-            raise ValueError(f"File not found: {path}")
+            raise NotFoundError(f"File not found: {path}")
         return target
 
     def rename_file(self, workspace_id: str, old_path: str, new_path: str) -> str:
         source = self._resolve_safe_path(workspace_id, old_path)
         target = self._resolve_safe_path(workspace_id, new_path)
         if not source.exists():
-            raise ValueError(f"Source not found: {old_path}")
+            raise NotFoundError(f"Source not found: {old_path}")
         if target.exists():
-            raise ValueError(f"Target already exists: {new_path}")
+            raise AlreadyExistsError(f"Target already exists: {new_path}")
         target.parent.mkdir(parents=True, exist_ok=True)
         source.rename(target)
         return f"Renamed: {old_path} → {new_path}"
@@ -253,7 +259,7 @@ class WorkspaceManager:
     def mkdir(self, workspace_id: str, path: str) -> str:
         target = self._resolve_safe_path(workspace_id, path)
         if target.exists():
-            raise ValueError(f"Already exists: {path}")
+            raise AlreadyExistsError(f"Already exists: {path}")
         target.mkdir(parents=True, exist_ok=True)
         return f"Created directory: {path}"
 
@@ -261,11 +267,11 @@ class WorkspaceManager:
         import shutil
         target = self._resolve_safe_path(workspace_id, path)
         if not target.exists():
-            raise ValueError(f"Not found: {path}")
+            raise NotFoundError(f"Not found: {path}")
         ws = self._workspaces.get(workspace_id)
         root = Path(ws.path).resolve()  # type: ignore[union-attr]
         if target == root:
-            raise ValueError("Cannot delete workspace root")
+            raise PermissionDeniedError("Cannot delete workspace root")
         if target.is_dir():
             shutil.rmtree(target)
         else:
@@ -285,7 +291,7 @@ class WorkspaceManager:
         target = self._resolve_safe_path(workspace_id, path)
         # 빈 content로 기존 파일 덮어쓰기 차단 (삭제 우회 방지)
         if not content.strip() and target.is_file():
-            raise ValueError(
+            raise PermissionDeniedError(
                 "빈 내용으로 기존 파일을 덮어쓸 수 없습니다. "
                 "워크스페이스에서는 파일 삭제가 지원되지 않습니다."
             )
@@ -298,7 +304,7 @@ class WorkspaceManager:
 
         target = self._resolve_safe_path(workspace_id, req.path)
         if not target.is_file():
-            raise ValueError(f"File not found: {req.path}")
+            raise NotFoundError(f"File not found: {req.path}")
 
         if not req.old_string:
             raise ValueError("old_string cannot be empty")

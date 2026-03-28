@@ -15,6 +15,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
+from open_agent.core.exceptions import ConfigError, NotFoundError
 from open_agent.models.mcp import (
     MCPServerConfig,
     MCPServerInfo,
@@ -82,7 +83,7 @@ class MCPClientManager:
     async def connect_server(self, server_name: str) -> None:
         """Connect to a single MCP server by name."""
         if server_name not in self._configs:
-            raise ValueError(f"Server '{server_name}' not found in config")
+            raise NotFoundError(f"Server '{server_name}' not found in config")
 
         config = self._configs[server_name]
         if not config.enabled:
@@ -103,10 +104,10 @@ class MCPClientManager:
 
             if config.transport == "stdio":
                 if not config.command:
-                    raise ValueError(f"Server '{server_name}': stdio transport requires 'command'")
+                    raise ConfigError(f"Server '{server_name}': stdio transport requires 'command'")
                 # command가 PATH에 존재하는지 확인
                 if not shutil.which(config.command):
-                    raise ValueError(f"Server '{server_name}': command not found in PATH: '{config.command}'")
+                    raise ConfigError(f"Server '{server_name}': command not found in PATH: '{config.command}'")
                 params = StdioServerParameters(
                     command=config.command,
                     args=config.args or [],
@@ -117,19 +118,19 @@ class MCPClientManager:
                 )
             elif config.transport == "sse":
                 if not config.url:
-                    raise ValueError(f"Server '{server_name}': sse transport requires 'url'")
+                    raise ConfigError(f"Server '{server_name}': sse transport requires 'url'")
                 parsed = urlparse(config.url)
                 if parsed.scheme not in ("http", "https"):
-                    raise ValueError(f"Server '{server_name}': URL scheme must be http or https, got '{parsed.scheme}'")
+                    raise ConfigError(f"Server '{server_name}': URL scheme must be http or https, got '{parsed.scheme}'")
                 read_stream, write_stream = await exit_stack.enter_async_context(
                     sse_client(config.url)
                 )
             elif config.transport == "streamable-http":
                 if not config.url:
-                    raise ValueError(f"Server '{server_name}': streamable-http transport requires 'url'")
+                    raise ConfigError(f"Server '{server_name}': streamable-http transport requires 'url'")
                 parsed = urlparse(config.url)
                 if parsed.scheme not in ("http", "https"):
-                    raise ValueError(f"Server '{server_name}': URL scheme must be http or https, got '{parsed.scheme}'")
+                    raise ConfigError(f"Server '{server_name}': URL scheme must be http or https, got '{parsed.scheme}'")
                 if config.headers:
                     http_client = await exit_stack.enter_async_context(
                         httpx.AsyncClient(headers=config.headers)
@@ -143,7 +144,7 @@ class MCPClientManager:
                     )
                 read_stream, write_stream = result[0], result[1]
             else:
-                raise ValueError(f"Unsupported transport: {config.transport}")
+                raise ConfigError(f"Unsupported transport: {config.transport}")
 
             session = await exit_stack.enter_async_context(
                 ClientSession(read_stream, write_stream)
@@ -289,7 +290,7 @@ class MCPClientManager:
     def get_server_status(self, name: str) -> MCPServerInfo:
         """Get status info for a specific server."""
         if name not in self._configs:
-            raise ValueError(f"Server '{name}' not found")
+            raise NotFoundError(f"Server '{name}' not found")
         return MCPServerInfo(
             name=name,
             config=self._configs[name],
@@ -334,7 +335,7 @@ class MCPClientManager:
     def update_server_config(self, name: str, updates: Dict[str, Any]) -> MCPServerConfig:
         """Partially update a server config and persist."""
         if name not in self._configs:
-            raise ValueError(f"Server '{name}' not found")
+            raise NotFoundError(f"Server '{name}' not found")
         current = self._configs[name].model_dump()
         current.update({k: v for k, v in updates.items() if v is not None})
         self._configs[name] = MCPServerConfig(**current)

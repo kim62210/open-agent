@@ -11,6 +11,14 @@ from xml.sax.saxutils import escape as xml_escape, quoteattr as xml_quoteattr
 
 import yaml
 
+from open_agent.core.exceptions import (
+    AlreadyExistsError,
+    ConfigError,
+    InvalidPathError,
+    NotFoundError,
+    PermissionDeniedError,
+    SkillValidationError,
+)
 from open_agent.models.skill import SkillInfo, SkillDetail
 
 logger = logging.getLogger(__name__)
@@ -85,10 +93,10 @@ class SkillManager:
     def _parse_frontmatter(self, skill_md_path: Path) -> Dict[str, Any]:
         content = skill_md_path.read_text(encoding="utf-8")
         if not content.startswith("---"):
-            raise ValueError(f"No YAML frontmatter: {skill_md_path}")
+            raise SkillValidationError(f"No YAML frontmatter: {skill_md_path}")
         parts = content.split("---", 2)
         if len(parts) < 3:
-            raise ValueError(f"Invalid frontmatter format: {skill_md_path}")
+            raise SkillValidationError(f"Invalid frontmatter format: {skill_md_path}")
         return yaml.safe_load(parts[1]) or {}
 
     _SKIP_DIRS = {"__pycache__", ".git", "node_modules", ".venv"}
@@ -221,7 +229,7 @@ class SkillManager:
         for subdir in candidates:
             full_path = (skill_base / subdir / rel_path).resolve()
             if not full_path.is_relative_to(skill_base):
-                raise ValueError(f"Path traversal detected: {rel_path}")
+                raise InvalidPathError(f"Path traversal detected: {rel_path}")
             if full_path.is_file():
                 return full_path
         return None
@@ -296,7 +304,7 @@ class SkillManager:
 
     def create_skill(self, name: str, description: str, instructions: str = "") -> SkillInfo:
         if not self._base_dirs:
-            raise ValueError("No skill directories configured")
+            raise ConfigError("No skill directories configured")
 
         skill_dir = self._base_dirs[0] / name
         skill_dir.mkdir(parents=True, exist_ok=True)
@@ -325,42 +333,42 @@ class SkillManager:
         self._rediscover()
         skill = self._skills.get(name)
         if not skill:
-            raise ValueError(f"스킬 '{name}' 생성 후 로딩 실패 — SKILL.md 형식을 확인하세요.")
+            raise SkillValidationError(f"스킬 '{name}' 생성 후 로딩 실패 — SKILL.md 형식을 확인하세요.")
         return skill
 
     def import_from_path(self, source_path: str) -> SkillInfo:
         """기존 스킬 폴더를 skills 디렉토리로 복사하여 등록"""
         if not self._base_dirs:
-            raise ValueError("No skill directories configured")
+            raise ConfigError("No skill directories configured")
 
         src = Path(source_path).resolve()
         if not src.is_dir():
-            raise ValueError(f"Source is not a directory: {source_path}")
+            raise NotFoundError(f"Source is not a directory: {source_path}")
         if not (src / "SKILL.md").is_file():
-            raise ValueError(f"SKILL.md not found in: {source_path}")
+            raise NotFoundError(f"SKILL.md not found in: {source_path}")
 
         fm = self._parse_frontmatter(src / "SKILL.md")
         name = fm.get("name", src.name)
 
         dest = self._base_dirs[0] / name
         if dest.exists():
-            raise ValueError(f"Skill '{name}' already exists")
+            raise AlreadyExistsError(f"Skill '{name}' already exists")
 
         shutil.copytree(str(src), str(dest))
         self._rediscover()
         skill = self._skills.get(name)
         if not skill:
-            raise ValueError(f"스킬 '{name}' 임포트 후 로딩 실패 — SKILL.md 형식을 확인하세요.")
+            raise SkillValidationError(f"스킬 '{name}' 임포트 후 로딩 실패 — SKILL.md 형식을 확인하세요.")
         return skill
 
     def import_from_zip(self, zip_path: str) -> SkillInfo:
         """zip 파일을 풀어서 스킬로 등록"""
         if not self._base_dirs:
-            raise ValueError("No skill directories configured")
+            raise ConfigError("No skill directories configured")
 
         zp = Path(zip_path)
         if not zp.is_file():
-            raise ValueError(f"Zip file not found: {zip_path}")
+            raise NotFoundError(f"Zip file not found: {zip_path}")
 
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -370,14 +378,14 @@ class SkillManager:
                 for entry in zf.namelist():
                     entry_path = (tmp_resolved / entry).resolve()
                     if not entry_path.is_relative_to(tmp_resolved):
-                        raise ValueError(f"Zip Slip detected: {entry}")
+                        raise InvalidPathError(f"Zip Slip detected: {entry}")
                 zf.extractall(tmpdir)
 
             # zip 내부 구조 탐색: SKILL.md를 가진 폴더 찾기
             tmp = Path(tmpdir)
             skill_root = self._find_skill_root(tmp)
             if not skill_root:
-                raise ValueError("SKILL.md not found in zip archive")
+                raise SkillValidationError("SKILL.md not found in zip archive")
 
             return self.import_from_path(str(skill_root))
 
@@ -411,7 +419,7 @@ class SkillManager:
             return False
 
         if skill.is_bundled:
-            raise ValueError(f"번들 스킬 '{name}'은(는) 삭제할 수 없습니다.")
+            raise PermissionDeniedError(f"번들 스킬 '{name}'은(는) 삭제할 수 없습니다.")
 
         shutil.rmtree(skill.path, ignore_errors=True)
         self._skills.pop(name, None)
@@ -438,7 +446,7 @@ class SkillManager:
             return None
 
         if skill.is_bundled and (description is not None or instructions is not None):
-            raise ValueError(f"번들 스킬 '{name}'의 설명/지시사항은 수정할 수 없습니다.")
+            raise PermissionDeniedError(f"번들 스킬 '{name}'의 설명/지시사항은 수정할 수 없습니다.")
 
         if enabled is not None:
             self.toggle_skill(name, enabled)

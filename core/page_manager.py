@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from open_agent.core.exceptions import NotFoundError, NotInitializedError, StorageLimitError
 from open_agent.models.page import PageInfo
 
 logger = logging.getLogger(__name__)
@@ -249,7 +250,7 @@ class PageManager:
 
     def add_page(self, name: str, description: str, html_bytes: bytes, original_filename: str, parent_id: Optional[str] = None) -> PageInfo:
         if not self._pages_dir:
-            raise ValueError("PageManager not initialized")
+            raise NotInitializedError("PageManager not initialized")
 
         page_id = uuid.uuid4().hex[:8]
         ext = Path(original_filename).suffix or ".html"
@@ -274,11 +275,11 @@ class PageManager:
 
     def add_page_from_path(self, name: str, description: str, source_path: str, parent_id: Optional[str] = None) -> PageInfo:
         if not self._pages_dir:
-            raise ValueError("PageManager not initialized")
+            raise NotInitializedError("PageManager not initialized")
 
         src = Path(source_path).resolve()
         if not src.is_file():
-            raise ValueError(f"File not found: {source_path}")
+            raise NotFoundError(f"File not found: {source_path}")
 
         html_bytes = src.read_bytes()
         return self.add_page(name, description, html_bytes, src.name, parent_id=parent_id)
@@ -332,7 +333,7 @@ class PageManager:
         parent_id: Optional[str] = None,
     ) -> PageInfo:
         if not self._pages_dir:
-            raise ValueError("PageManager not initialized")
+            raise NotInitializedError("PageManager not initialized")
 
         page_id = uuid.uuid4().hex[:8]
         bundle_dir = self._pages_dir / page_id
@@ -640,7 +641,7 @@ class PageManager:
         data[key] = value
         serialized = json.dumps(data, ensure_ascii=False)
         if len(serialized.encode("utf-8")) > 1_048_576:  # 1MB limit
-            raise ValueError("KV storage size limit exceeded (max 1MB per page)")
+            raise StorageLimitError("KV storage size limit exceeded (max 1MB per page)")
         self._save_kv(path, data)
         # KV는 페이지 자체 상태 저장용 — bump_version 하지 않음
         # (버전 변경 시 뷰어가 iframe을 리로드하여 사용자 입력이 소멸되므로)

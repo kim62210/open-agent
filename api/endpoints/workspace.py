@@ -143,10 +143,7 @@ async def list_workspaces():
 
 @router.post("/", response_model=WorkspaceInfo)
 async def create_workspace(req: CreateWorkspaceRequest):
-    try:
-        return workspace_manager.create_workspace(req.name, req.path, req.description)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return workspace_manager.create_workspace(req.name, req.path, req.description)
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceInfo)
@@ -192,10 +189,7 @@ async def get_file_tree(
     path: str = ".",
     max_depth: int = 3,
 ):
-    try:
-        return workspace_manager.get_file_tree(workspace_id, path, max_depth)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return workspace_manager.get_file_tree(workspace_id, path, max_depth)
 
 
 @router.get("/{workspace_id}/file", response_model=FileContent)
@@ -205,10 +199,7 @@ async def read_file(
     offset: int = 0,
     limit: Optional[int] = None,
 ):
-    try:
-        return workspace_manager.read_file(workspace_id, path, offset, limit)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return workspace_manager.read_file(workspace_id, path, offset, limit)
 
 
 # 개발 파일 확장자 MIME 오버라이드 (.ts → video/mp2t 방지 등)
@@ -222,10 +213,7 @@ _MIME_OVERRIDES = {
 
 @router.get("/{workspace_id}/raw")
 async def get_raw_file(workspace_id: str, path: str, download: bool = False):
-    try:
-        file_path = workspace_manager.get_raw_file_path(workspace_id, path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    file_path = workspace_manager.get_raw_file_path(workspace_id, path)
 
     ext = file_path.suffix.lower()
     media_type = _MIME_OVERRIDES.get(ext)
@@ -250,13 +238,10 @@ async def upload_files(
     results = []
     for file in files:
         content = await file.read()
-        try:
-            rel_path = workspace_manager.upload_file(
-                workspace_id, path, file.filename or "unnamed", content
-            )
-            results.append({"filename": file.filename, "path": rel_path})
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        rel_path = workspace_manager.upload_file(
+            workspace_id, path, file.filename or "unnamed", content
+        )
+        results.append({"filename": file.filename, "path": rel_path})
     return {"status": "ok", "uploaded": results}
 
 
@@ -275,38 +260,26 @@ class DeleteFileRequest(BaseModel):
 
 @router.post("/{workspace_id}/rename")
 async def rename_file(workspace_id: str, req: RenameRequest):
-    try:
-        result = workspace_manager.rename_file(workspace_id, req.old_path, req.new_path)
-        return {"status": "ok", "message": result}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    result = workspace_manager.rename_file(workspace_id, req.old_path, req.new_path)
+    return {"status": "ok", "message": result}
 
 
 @router.post("/{workspace_id}/mkdir")
 async def mkdir(workspace_id: str, req: MkdirRequest):
-    try:
-        result = workspace_manager.mkdir(workspace_id, req.path)
-        return {"status": "ok", "message": result}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    result = workspace_manager.mkdir(workspace_id, req.path)
+    return {"status": "ok", "message": result}
 
 
 @router.post("/{workspace_id}/delete")
 async def delete_file(workspace_id: str, req: DeleteFileRequest):
-    try:
-        result = workspace_manager.delete_path(workspace_id, req.path)
-        return {"status": "ok", "message": result}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    result = workspace_manager.delete_path(workspace_id, req.path)
+    return {"status": "ok", "message": result}
 
 
 @router.post("/{workspace_id}/file")
 async def write_file(workspace_id: str, req: WriteFileRequest):
-    try:
-        result = workspace_manager.write_file(workspace_id, req.path, req.content)
-        return {"status": "ok", "message": result}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    result = workspace_manager.write_file(workspace_id, req.path, req.content)
+    return {"status": "ok", "message": result}
 
 
 @router.post("/{workspace_id}/edit")
@@ -315,4 +288,4 @@ async def edit_file(workspace_id: str, req: EditFileRequest):
         result = workspace_manager.edit_file(workspace_id, req)
         return {"status": "ok", "message": result}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e

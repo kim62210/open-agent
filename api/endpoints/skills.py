@@ -42,7 +42,7 @@ async def create_skill(req: CreateSkillRequest):
     try:
         return skill_manager.create_skill(req.name, req.description, req.instructions)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.delete("/{name}")
@@ -59,15 +59,12 @@ async def delete_skill(name: str):
 
 @router.patch("/{name}", response_model=SkillInfo)
 async def update_skill(name: str, req: UpdateSkillRequest):
-    try:
-        result = skill_manager.update_skill(
-            name,
-            description=req.description,
-            instructions=req.instructions,
-            enabled=req.enabled,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    result = skill_manager.update_skill(
+        name,
+        description=req.description,
+        instructions=req.instructions,
+        enabled=req.enabled,
+    )
     if not result:
         raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
     return result
@@ -98,7 +95,7 @@ async def upload_skill_zip(file: UploadFile = File(...)):
         data = await file.read()
         return skill_manager.import_from_zip_bytes(data, file.filename)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 class ImportPathRequest(BaseModel):
@@ -111,7 +108,7 @@ async def import_skill_from_path(req: ImportPathRequest):
     try:
         return skill_manager.import_from_path(req.path)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ── 스크립트/참조 파일 읽기·쓰기 ──────────────────────────────
