@@ -1,12 +1,15 @@
-from typing import Optional
-from pydantic import BaseModel
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict
 
 
 class PageInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     id: str
     name: str
     description: str = ""
-    content_type: str = "html"        # "html" | "url" | "folder" | "bundle"
+    content_type: Literal["html", "url", "folder", "bundle"] = "html"
     parent_id: Optional[str] = None   # null = root level
     filename: Optional[str] = None
     size_bytes: int = 0
@@ -18,17 +21,23 @@ class PageInfo(BaseModel):
 
 
 class CreatePageRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     name: str
     description: str = ""
 
 
 class UpdatePageRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     name: Optional[str] = None
     description: Optional[str] = None
     parent_id: Optional[str] = None
 
 
 class CreateBookmarkRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     name: str
     url: str
     description: str = ""
@@ -36,6 +45,8 @@ class CreateBookmarkRequest(BaseModel):
 
 
 class CreateFolderRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     name: str
     description: str = ""
     parent_id: Optional[str] = None

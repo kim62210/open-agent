@@ -1,19 +1,31 @@
-from typing import List, Optional, Union
-from pydantic import BaseModel
+from enum import Enum
+from typing import Any, List, Optional, Union
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class MessageRole(str, Enum):
+    user = "user"
+    assistant = "assistant"
+    tool = "tool"
 
 
 class SessionMessage(BaseModel):
-    role: str  # "user" | "assistant" | "tool"
-    content: Union[str, list]  # str or multimodal array
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
+    role: MessageRole
+    content: Union[str, list[dict[str, Any]]]
     name: Optional[str] = None
     tool_call_id: Optional[str] = None
     timestamp: Optional[str] = None
-    thinking_steps: Optional[list] = None  # 도구 호출/결과/사고 과정 보존
-    display_text: Optional[str] = None  # 파일 첨부 시 UI 표시용 텍스트 (파일 내용 제외)
-    attached_files: Optional[list] = None  # [{name, size, isImage}]
+    thinking_steps: Optional[list[dict[str, Any]]] = None
+    display_text: Optional[str] = None
+    attached_files: Optional[list[dict[str, Any]]] = None
 
 
 class SessionInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     id: str
     title: str
     created_at: str  # ISO 8601
@@ -23,18 +35,26 @@ class SessionInfo(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     title: str = ""
 
 
 class UpdateSessionRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     title: str
 
 
 class SaveMessagesRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     messages: List[SessionMessage]
 
 
 class SessionDetail(BaseModel):
     """세션 상세 (메타 + 메시지)"""
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     info: SessionInfo
     messages: List[SessionMessage]

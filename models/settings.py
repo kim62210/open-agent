@@ -1,10 +1,13 @@
-from typing import Optional
-from pydantic import BaseModel
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from open_agent.models.memory import MemorySettings
 
 
 class LLMSettings(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     model: str = "hosted_vllm/openai/gpt-oss-120b"
     api_base: Optional[str] = "http://192.168.1.121:11436/v1"
     api_key: Optional[str] = "dummy"  # override, 미설정 시 env GOOGLE_API_KEY 사용
@@ -17,10 +20,12 @@ class LLMSettings(BaseModel):
     system_prompt_budget: int = 0  # 시스템 프롬프트 최대 글자수 (0=무제한)
     context_window: int = 0  # 모델 컨텍스트 윈도우 (토큰, 0=LiteLLM 자동 감지)
     compact_threshold: float = 0.7  # 컨텍스트 사용률이 이 비율 초과 시 압축 트리거
-    reasoning_effort: str = "medium"  # low / medium / high — 작업 복잡도에 따라 동적 조절 가능
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
 
 
 class ProfileSettings(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     name: str = ""
     avatar: str = ""  # base64 data URI
     platform_name: str = "Open Agent"
@@ -30,8 +35,10 @@ class ProfileSettings(BaseModel):
 
 
 class ThemeSettings(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     accent_color: str = "amber"
-    mode: str = "dark"
+    mode: Literal["dark", "light", "system"] = "dark"
     tone: str = "default"
     show_blobs: bool = True
     chat_bg_image: str = ""
@@ -43,20 +50,26 @@ class ThemeSettings(BaseModel):
 
 
 class CustomModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     label: str       # 표시명
     model: str       # LiteLLM 모델 ID
     provider: str    # 프로바이더 그룹 키
 
 
 class AppSettings(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     llm: LLMSettings = LLMSettings()
     memory: MemorySettings = MemorySettings()
     profile: ProfileSettings = ProfileSettings()
     theme: ThemeSettings = ThemeSettings()
-    custom_models: list[CustomModel] = []
+    custom_models: list[CustomModel] = Field(default_factory=list)
 
 
 class UpdateLLMRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     model: Optional[str] = None
     api_base: Optional[str] = None
     api_key: Optional[str] = None
@@ -69,6 +82,8 @@ class UpdateLLMRequest(BaseModel):
 
 
 class UpdateMemorySettingsRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     enabled: Optional[bool] = None
     max_memories: Optional[int] = None
     max_injection_tokens: Optional[int] = None
@@ -77,6 +92,8 @@ class UpdateMemorySettingsRequest(BaseModel):
 
 
 class UpdateProfileRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     name: Optional[str] = None
     avatar: Optional[str] = None
     platform_name: Optional[str] = None
@@ -86,8 +103,10 @@ class UpdateProfileRequest(BaseModel):
 
 
 class UpdateThemeRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
     accent_color: Optional[str] = None
-    mode: Optional[str] = None
+    mode: Optional[Literal["dark", "light", "system"]] = None
     tone: Optional[str] = None
     show_blobs: Optional[bool] = None
     chat_bg_image: Optional[str] = None
