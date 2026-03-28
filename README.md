@@ -1,204 +1,401 @@
-# Open Agent Backend
+<p align="center">
+  <img src="static/icon.svg" width="80" height="80" alt="Open Agent">
+  <h1 align="center">Open Agent</h1>
+</p>
 
-> AI와 실무를 연결하는 Open Agent 플랫폼의 Python 백엔드.
+<p align="center">
+  <strong>A local-first AI agent platform with multi-LLM support, MCP tool integration, and persistent memory.</strong>
+</p>
 
-Python 3.13 + FastAPI 기반. LiteLLM 추상화를 통한 멀티 LLM 지원, MCP(Model Context Protocol) 도구 연동, Agent Skills 실행, Workspace 파일/셸 도구, 장기 기억(Memory) 자동 추출/압축/고정, 세션 관리, SSE 실시간 스트리밍을 제공합니다.
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#quickstart">Quickstart</a> •
+  <a href="#architecture">Architecture</a> •
+  <a href="#api-reference">API Reference</a> •
+  <a href="#contributing">Contributing</a> •
+  <a href="#license">License</a>
+</p>
 
-## 설치 및 실행
+---
+
+## Features
+
+- **Multi-LLM Support** — Connect to OpenAI, Anthropic, Google, Groq, Ollama, vLLM, and 100+ providers through [LiteLLM](https://github.com/BerriAI/litellm)
+- **MCP Integration** — First-class [Model Context Protocol](https://modelcontextprotocol.io/) support with stdio, SSE, and streamable-http transports
+- **Agent Skills** — Extensible skill system using the open [SKILL.md](https://agentskills.io/) standard (YAML frontmatter + Markdown)
+- **Persistent Memory** — Automatic extraction, compression, and pinning of long-term memories across sessions
+- **Workspace Tools** — File read/write/edit, regex search, directory listing, and sandboxed shell execution
+- **Job Scheduler** — Cron-based background task scheduling with agent-powered execution
+- **Web UI** — Built-in Next.js frontend served as static export
+- **Rust-Accelerated** — Native Rust extensions for grep, fuzzy matching, and sandboxing with Python fallback
+- **SSE Streaming** — Real-time streaming of agent reasoning, tool calls, and responses
+- **Structured Logging** — [structlog](https://www.structlog.org/) with request correlation IDs and dev/prod format switching
+
+## Quickstart
+
+### Prerequisites
+
+- Python 3.13+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+
+### Installation
 
 ```bash
-# 의존성 설치 (uv 사용)
+# Clone the repository
+git clone https://github.com/kim62210/open-agent.git
+cd open-agent
+
+# Install dependencies
 uv sync
 
-# 개발 환경 (테스트 + lint 포함)
-uv sync --group dev
-
-# 개발 모드
-uv run open-agent start --dev
-
-# 직접 실행
-uv run uvicorn open_agent.server:app --reload --host 127.0.0.1 --port 4821
+# Create environment file
+cp ~/.open-agent/.env.example ~/.open-agent/.env
+# Edit .env and add your API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
 ```
 
-## 테스트
+### Running
 
 ```bash
-# 전체 테스트 실행
+# Start in development mode (hot reload, colored logs)
+uv run open-agent start --dev
+
+# Production mode (JSON logs)
+uv run open-agent start
+
+# Direct uvicorn invocation
+uv run uvicorn open_agent.server:app --host 127.0.0.1 --port 4821
+```
+
+The web UI is available at `http://localhost:4821` once the server starts.
+
+### Development Setup
+
+```bash
+# Install with dev dependencies (test + lint)
+uv sync --group dev
+
+# Run tests
 uv run pytest
 
-# 커버리지 리포트
+# Run tests with coverage
 uv run pytest --cov --cov-report=term-missing
+
+# Lint and format
+uv run ruff check .
+uv run ruff format .
+
+# Type checking
+uv run mypy .
 ```
 
-## 구조
+## Architecture
+
+### System Overview
 
 ```
-open_agent/
-├── __init__.py                 # 패키지 버전 (__version__)
-├── __main__.py                 # python -m open_agent 지원
-├── cli.py                      # Click CLI 엔트리포인트 (open-agent 명령)
-├── server.py                   # FastAPI 앱, 라우터 등록, 정적 파일 서빙, CORS, 라이프사이클
-├── config.py                   # ~/.open-agent/ 데이터 디렉토리 경로 관리
-├── README.md                   # 이 파일
-├── core/                       # 핵심 비즈니스 로직
-│   ├── __init__.py
-│   ├── agent.py                # AgentOrchestrator — 도구 라우팅, SSE 스트리밍, 멀티턴 실행
-│   ├── llm.py                  # LLMClient — LiteLLM acompletion 래퍼, API 키 자동 해석
-│   ├── exceptions.py           # OpenAgentError 기반 커스텀 예외 계층 (18개 예외 클래스)
-│   ├── logging.py              # structlog 기반 구조화 로깅 설정
-│   ├── mcp_manager.py          # MCPClientManager — MCP 서버 연결/재시작/도구 탐색
-│   ├── skill_manager.py        # SkillManager — SKILL.md 파싱, 스킬 도구 생성, 스크립트 실행
-│   ├── page_manager.py         # PageManager — HTML 페이지/폴더/북마크 트리 관리
-│   ├── settings_manager.py     # SettingsManager — LLM/테마/메모리 설정 CRUD
-│   ├── session_manager.py      # SessionManager — 대화 세션 히스토리 저장/복원
-│   ├── workspace_manager.py    # WorkspaceManager — 워크스페이스 등록/활성화, 파일 트리/내용 조회
-│   ├── workspace_tools.py      # Workspace 도구 — 파일 읽기/쓰기/편집/검색/셸 실행 + 보안
-│   └── memory_manager.py       # MemoryManager — 추출/압축/고정(Pin)/자동 교체/시스템 프롬프트 주입
-├── api/                        # FastAPI 라우터 (REST API)
-│   ├── __init__.py
-│   ├── middleware.py            # RequestLoggingMiddleware (request_id + 구조화 접근 로그)
+┌─────────────────────────────────────────────────────────┐
+│                      Web UI (Next.js)                   │
+│                   served as static export               │
+└──────────────────────────┬──────────────────────────────┘
+                           │ HTTP / SSE
+┌──────────────────────────▼──────────────────────────────┐
+│                    FastAPI Server                        │
+│  ┌─────────┐ ┌──────────┐ ┌───────────┐ ┌───────────┐  │
+│  │  Chat   │ │ Sessions │ │  Memory   │ │ Settings  │  │
+│  │ (SSE)   │ │  CRUD    │ │  CRUD     │ │  CRUD     │  │
+│  └────┬────┘ └──────────┘ └───────────┘ └───────────┘  │
+│       │                                                  │
+│  ┌────▼─────────────────────────────────────────────┐   │
+│  │            AgentOrchestrator (ReAct Loop)         │   │
+│  │  LLM Call → Tool Execution → Result → Repeat     │   │
+│  └──┬──────────┬──────────────┬─────────────────┬───┘   │
+│     │          │              │                 │        │
+│  ┌──▼───┐  ┌──▼────┐  ┌─────▼──────┐  ┌──────▼─────┐  │
+│  │ LLM  │  │ Tool  │  │  Skill     │  │  Memory    │  │
+│  │Client│  │Registry│  │  Manager   │  │  Manager   │  │
+│  └──┬───┘  └──┬────┘  └─────┬──────┘  └──────┬─────┘  │
+│     │         │              │                 │        │
+└─────┼─────────┼──────────────┼─────────────────┼────────┘
+      │         │              │                 │
+  ┌───▼───┐ ┌──▼───┐   ┌──────▼──────┐  ┌──────▼──────┐
+  │LiteLLM│ │ MCP  │   │  SKILL.md   │  │   JSON      │
+  │ Proxy │ │Servers│   │  (YAML+MD)  │  │  Storage    │
+  └───────┘ └──────┘   └─────────────┘  └─────────────┘
+```
+
+### Project Structure
+
+```
+open-agent/
+├── pyproject.toml              # Build config (hatchling), dependencies, tool settings
+├── __init__.py                 # Package version (__version__)
+├── __main__.py                 # python -m support
+├── cli.py                      # Click CLI entrypoint (open-agent command)
+├── server.py                   # FastAPI app, router registration, static serving, CORS
+├── config.py                   # ~/.open-agent/ data directory management
+│
+├── core/                       # Business logic
+│   ├── agent.py                # AgentOrchestrator — ReAct loop, tool routing, SSE streaming
+│   ├── llm.py                  # LLMClient — LiteLLM wrapper, API key resolution, token management
+│   ├── exceptions.py           # OpenAgentError hierarchy (18 domain exception classes)
+│   ├── logging.py              # structlog setup (dev console / prod JSON)
+│   ├── tool_registry.py        # Deferred tool loading with find_tools meta-tool
+│   ├── tool_errors.py          # Error classification and LLM-friendly formatting
+│   ├── unified_tools.py        # Context-aware tool routing (workspace/page/skill)
+│   ├── mcp_manager.py          # MCP server lifecycle (stdio/SSE/streamable-http)
+│   ├── skill_manager.py        # SKILL.md parsing, skill tools, script execution
+│   ├── memory_manager.py       # L1 long-term memory + L2 session summary
+│   ├── session_manager.py      # Conversation session persistence
+│   ├── settings_manager.py     # Application settings CRUD
+│   ├── workspace_manager.py    # Workspace registration and file tree
+│   ├── workspace_tools.py      # File/shell tools with security guards
+│   ├── page_manager.py         # HTML page/folder/bookmark management
+│   ├── job_manager.py          # Job CRUD and LLM tool schema builder
+│   ├── job_scheduler.py        # asyncio-based cron scheduler
+│   ├── job_executor.py         # Job execution adapter
+│   ├── sandbox.py              # OS-native sandboxing (macOS Seatbelt / Linux bwrap)
+│   ├── grep_engine.py          # 3-tier search: Rust native → ripgrep → Python
+│   ├── fuzzy.py                # Fuzzy matching with Rust acceleration
+│   └── workflow_router.py      # LLM-based skill auto-routing
+│
+├── api/                        # FastAPI routers
+│   ├── middleware.py            # RequestLoggingMiddleware (request_id + structured access logs)
 │   └── endpoints/
-│       ├── __init__.py
-│       ├── chat.py             # POST /api/chat/stream — SSE 스트리밍 채팅
-│       ├── mcp.py              # /api/mcp/* — MCP 서버 CRUD, 도구 목록
-│       ├── skills.py           # /api/skills/* — 스킬 CRUD, ZIP 업로드, 임포트
-│       ├── pages.py            # /api/pages/* — 페이지/폴더 CRUD, HTML 업로드, 북마크
-│       ├── sessions.py         # /api/sessions/* — 세션 히스토리 CRUD
-│       ├── settings.py         # /api/settings/* — LLM/테마/메모리 설정, 헬스체크
-│       ├── workspace.py        # /api/workspace/* — 워크스페이스 CRUD, 파일 트리/내용
-│       └── memory.py           # /api/memory/* — 메모리 CRUD, 핀 토글, 전체 삭제
-├── models/                     # Pydantic V2 데이터 모델
-│   ├── __init__.py
-│   ├── _base.py                # OpenAgentBase (공통 ConfigDict)
-│   ├── error.py                # ErrorResponse, ErrorDetail (표준 에러 스키마)
-│   ├── mcp.py                  # MCPServerConfig, MCPServerStatus, MCPTransport
-│   ├── skill.py                # SkillMeta, SkillInfo
-│   ├── page.py                 # PageItem, FolderItem
+│       ├── chat.py             # POST /api/chat — SSE streaming chat
+│       ├── sessions.py         # /api/sessions — Session history CRUD
+│       ├── memory.py           # /api/memory — Memory CRUD, pin toggle
+│       ├── settings.py         # /api/settings — LLM/theme/memory settings
+│       ├── skills.py           # /api/skills — Skill CRUD, ZIP upload, import
+│       ├── mcp.py              # /api/mcp — MCP server management
+│       ├── workspace.py        # /api/workspace — Workspace CRUD, file operations
+│       ├── pages.py            # /api/pages — Page/folder CRUD, HTML upload
+│       ├── jobs.py             # /api/jobs — Job scheduling CRUD
+│       └── sandbox.py          # /api/sandbox — Sandbox policy management
+│
+├── models/                     # Pydantic V2 data models
+│   ├── _base.py                # OpenAgentBase (shared ConfigDict)
+│   ├── error.py                # ErrorResponse, ErrorDetail
 │   ├── session.py              # SessionInfo, SessionMessage, MessageRole
-│   ├── settings.py             # Settings, LLMSettings, ThemeSettings
+│   ├── memory.py               # MemoryItem, MemorySettings
+│   ├── settings.py             # AppSettings, LLMSettings, ThemeSettings
+│   ├── skill.py                # SkillMeta, SkillInfo, SkillDetail
+│   ├── mcp.py                  # MCPServerConfig, MCPServerStatus, MCPTransport
 │   ├── job.py                  # JobInfo, JobRunStatus, JobScheduleType
-│   ├── workspace.py            # WorkspaceInfo, FileTreeNode
-│   └── memory.py               # MemoryItem (is_pinned 포함), MemorySettings
-├── tests/                      # pytest 테스트 (50개)
-│   ├── conftest.py             # 전역 fixture (격리 데이터, manager mock, async_client)
-│   ├── unit/                   # 단위 테스트 (SessionManager, MemoryManager)
-│   └── integration/            # 통합 테스트 (FastAPI 엔드포인트)
-└── static/                     # 빌드된 프론트엔드 (wheel에 포함, git에서 제외)
+│   ├── page.py                 # PageItem, FolderItem
+│   └── workspace.py            # WorkspaceInfo, FileTreeNode
+│
+├── bundled_skills/             # Built-in agent skills
+│   ├── impl/SKILL.md           # Implementation skill
+│   ├── test/SKILL.md           # Test generation skill
+│   ├── plan/SKILL.md           # Planning skill
+│   ├── debug/SKILL.md          # Debugging skill
+│   ├── review/SKILL.md         # Code review skill
+│   ├── find/SKILL.md           # Code search skill
+│   ├── coding-pipeline/        # Multi-step coding workflow
+│   └── skill-creator/          # Skill authoring tool
+│
+├── nexus_rust/                 # Rust native extensions (CPython)
+│   ├── __init__.py             # Python wrapper with fallback
+│   └── nexus_rust.cpython-*.so # Compiled binary
+│
+├── tests/                      # Test suite (50 tests)
+│   ├── conftest.py             # Shared fixtures (isolated data dir, manager mocks, async client)
+│   ├── unit/                   # Unit tests (SessionManager, MemoryManager)
+│   └── integration/            # Integration tests (FastAPI endpoints)
+│
+└── static/                     # Pre-built Next.js frontend (served by FastAPI)
 ```
 
-## 핵심 모듈
+### Key Design Patterns
 
-### AgentOrchestrator (`core/agent.py`)
+| Pattern | Implementation | Purpose |
+|---------|---------------|---------|
+| **Deferred Tool Loading** | `tool_registry.py` | Loads tools on-demand via `find_tools` meta-tool to save context window |
+| **3-Tier Fallback** | `grep_engine.py`, `fuzzy.py` | Rust native → subprocess (ripgrep) → pure Python |
+| **Progressive Disclosure** | `skill_manager.py` | Skills load in 3 stages: metadata → body → references |
+| **ReAct Loop** | `agent.py` | Reason + Act loop with configurable max rounds |
+| **L1/L2 Memory** | `memory_manager.py` | L1: long-term facts, L2: session summaries |
+| **Singleton + Per-Request State** | `agent.py` | Global orchestrator with `_RequestState` for concurrency safety |
 
-LLM 호출과 도구 실행을 오케스트레이션합니다.
+## API Reference
 
-- 시스템 프롬프트에 활성 스킬 목록(`<available_skills>` XML)과 장기 기억(`<memories>`) 주입
-- MCP 도구, 스킬 도구, 워크스페이스 도구를 하나의 도구 목록으로 병합
-- SSE 이벤트 스트리밍: `thinking` → `tool_call` → `tool_result` → `content` → `done`
-- 도구 호출 시 자동 라우팅: 네임스페이스 기반(`server__tool` → MCP, `skill_*` → Skills, `workspace_*` → Workspace)
-- 도구 결과를 메시지에 추가하여 멀티턴 자동 실행
+### Chat
 
-### MemoryManager (`core/memory_manager.py`)
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/chat` | Single-turn chat completion |
+| POST | `/api/chat/stream` | SSE streaming chat (recommended) |
 
-대화에서 장기 기억을 자동 추출하고 관리합니다.
+### Sessions
 
-- **자동 추출**: 대화 완료 후 LLM으로 새로운 사실/선호/패턴/맥락 추출
-- **자동 압축**: 용량 임계치(`compression_threshold`) 도달 시 LLM으로 유사 메모리 병합
-- **메모리 고정(Pin)**: `is_pinned=True`인 메모리는 자동 삭제 및 압축 대상에서 제외
-- **자동 교체**: 최대 용량 초과 시 가장 오래된 비핀(non-pinned) 메모리 삭제
-- **시스템 프롬프트 주입**: `build_memory_prompt()`로 LLM 컨텍스트에 자동 포함
-- 카테고리: preference, context, pattern, fact
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/sessions/` | List all sessions |
+| POST | `/api/sessions/` | Create a new session |
+| GET | `/api/sessions/{id}` | Get session detail with messages |
+| PATCH | `/api/sessions/{id}` | Update session title |
+| DELETE | `/api/sessions/{id}` | Delete a session |
 
-### WorkspaceTools (`core/workspace_tools.py`)
+### Memory
 
-활성 워크스페이스에서 AI가 사용하는 파일/셸 도구를 제공합니다.
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/memory/` | List all memories |
+| POST | `/api/memory/` | Create a memory manually |
+| PATCH | `/api/memory/{id}` | Update memory content |
+| PATCH | `/api/memory/{id}/pin` | Toggle pin status |
+| DELETE | `/api/memory/{id}` | Delete a memory |
+| DELETE | `/api/memory/` | Clear all non-pinned memories |
 
-- `workspace_read_file` — 파일 읽기 (라인 범위 지정 가능)
-- `workspace_write_file` — 파일 쓰기 (생성/덮어쓰기)
-- `workspace_edit_file` — 문자열 치환 편집
-- `workspace_search` — 정규식 파일 내용 검색
-- `workspace_list_files` — 디렉토리 트리 조회
-- `workspace_bash` — 셸 명령 실행 (타임아웃, 위험 명령 차단)
+### MCP Servers
 
-## API 엔드포인트
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/mcp/servers` | List MCP server configurations |
+| POST | `/api/mcp/servers` | Add a new MCP server |
+| PATCH | `/api/mcp/servers/{name}` | Update server config |
+| DELETE | `/api/mcp/servers/{name}` | Remove a server |
+| POST | `/api/mcp/servers/{name}/restart` | Restart a server connection |
+| GET | `/api/mcp/servers/{name}/tools` | List tools from a server |
 
-| Method | Path | 설명 |
-|--------|------|------|
-| POST | `/api/chat/stream` | SSE 스트리밍 채팅 |
-| GET | `/api/mcp/servers` | MCP 서버 목록 |
-| POST | `/api/mcp/servers` | MCP 서버 추가 |
-| PATCH | `/api/mcp/servers/{name}` | MCP 서버 수정 |
-| DELETE | `/api/mcp/servers/{name}` | MCP 서버 삭제 |
-| POST | `/api/mcp/servers/{name}/restart` | MCP 서버 재시작 |
-| GET | `/api/skills/` | 스킬 목록 |
-| POST | `/api/skills/` | 스킬 생성 |
-| POST | `/api/skills/upload` | 스킬 ZIP 업로드 |
-| POST | `/api/skills/import` | 스킬 경로 임포트 |
-| GET | `/api/pages/` | 페이지 목록 |
-| POST | `/api/pages/upload` | HTML 업로드 |
-| POST | `/api/pages/bookmark` | URL 북마크 추가 |
-| GET | `/api/workspace/` | 워크스페이스 목록 |
-| POST | `/api/workspace/` | 워크스페이스 등록 |
-| POST | `/api/workspace/{id}/activate` | 활성화 |
-| GET | `/api/workspace/{id}/tree` | 파일 트리 조회 |
-| GET | `/api/workspace/{id}/file` | 파일 내용 조회 |
-| GET | `/api/memory/` | 메모리 목록 |
-| POST | `/api/memory/` | 메모리 생성 |
-| PATCH | `/api/memory/{id}` | 메모리 수정 |
-| PATCH | `/api/memory/{id}/pin` | 메모리 핀 토글 |
-| DELETE | `/api/memory/{id}` | 메모리 삭제 |
-| DELETE | `/api/memory/` | 전체 메모리 삭제 |
-| GET | `/api/sessions/` | 세션 목록 |
-| GET | `/api/sessions/{id}` | 세션 상세 |
-| DELETE | `/api/sessions/{id}` | 세션 삭제 |
-| GET | `/api/settings/` | 설정 조회 |
-| PATCH | `/api/settings/llm` | LLM 설정 수정 |
-| PATCH | `/api/settings/memory` | 메모리 설정 수정 |
-| GET | `/api/settings/health` | 연결 상태 헬스체크 |
+### Skills
 
-## 보안
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/skills/` | List all skills |
+| POST | `/api/skills/` | Create a new skill |
+| PATCH | `/api/skills/{id}` | Update skill metadata |
+| DELETE | `/api/skills/{id}` | Delete a skill |
+| POST | `/api/skills/upload` | Upload skill as ZIP |
+| POST | `/api/skills/import` | Import skill from local path |
+| POST | `/api/skills/reload` | Reload all skills from disk |
 
-### 경로 순회 방지
+### Workspace
 
-모든 워크스페이스 파일 작업은 `_resolve_safe_path()`로 루트 내부만 접근 가능. `../../etc/passwd` 등 차단.
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/workspace/` | List workspaces |
+| POST | `/api/workspace/` | Register a workspace |
+| POST | `/api/workspace/{id}/activate` | Set active workspace |
+| POST | `/api/workspace/deactivate` | Deactivate current workspace |
+| GET | `/api/workspace/{id}/tree` | Get file tree |
+| GET | `/api/workspace/{id}/file` | Read file content |
 
-### 위험 셸 명령 차단 (10종)
+### Settings
 
-`workspace_bash` 도구에서 아래 패턴 매칭 시 실행 전 즉시 차단:
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/settings/` | Get all settings |
+| PATCH | `/api/settings/llm` | Update LLM settings |
+| PATCH | `/api/settings/memory` | Update memory settings |
+| PATCH | `/api/settings/theme` | Update theme settings |
+| GET | `/api/settings/health` | Health check (LLM connectivity) |
 
-- `rm -rf /` / `rm -fr /` — 루트 재귀 삭제
-- Fork bomb `:(){ :|:& };` — 무한 프로세스 생성
-- `dd if=/dev/zero of=/dev/sda` — 디스크 덮어쓰기
-- `mkfs.*` — 파일시스템 포맷
-- `> /dev/sda` — 블록 디바이스 직접 쓰기
-- `curl ... | sh` / `wget ... | sh` — 원격 스크립트 pipe-to-shell
-- `chmod -R 777 /` — 루트 전체 권한 변경
-- `chown -R ... /` — 루트 전체 소유자 변경
+### Jobs
 
-### 셸 실행 제한
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/jobs/` | List scheduled jobs |
+| POST | `/api/jobs/` | Create a new job |
+| PATCH | `/api/jobs/{id}` | Update job config |
+| DELETE | `/api/jobs/{id}` | Delete a job |
+| POST | `/api/jobs/{id}/run` | Trigger immediate execution |
+| POST | `/api/jobs/{id}/stop` | Stop a running job |
 
-- 타임아웃: 기본 30초, 최대 120초
-- 출력 절삭: stdout 30,000자, stderr 5,000자
-- 작업 디렉토리: 워크스페이스 루트 내부만 허용
+## Security
 
-### 파일 편집 안전장치
+### Path Traversal Prevention
 
-- 빈 `old_string` 거부
-- `old_string` 다중 매치 시 `replace_all=false`면 거부 (매치 수 안내)
+All workspace file operations pass through `_resolve_safe_path()`, which resolves symlinks and verifies the target is within the workspace root. Attempts like `../../etc/passwd` are blocked with `InvalidPathError`.
 
-## 데이터 저장
+### Dangerous Command Blocking
 
-모든 런타임 데이터는 `~/.open-agent/`에 JSON 파일로 저장됩니다:
+The `workspace_bash` tool blocks 10 categories of destructive shell patterns before execution:
 
-| 파일 | 설명 |
-|------|------|
-| `.env` | API 키 (dotenv) |
-| `settings.json` | LLM, 테마, 메모리 설정 |
-| `mcp.json` | MCP 서버 설정 |
-| `skills.json` | 스킬 활성화 상태 |
-| `pages.json` | 페이지/폴더 메타데이터 |
-| `workspaces.json` | 워크스페이스 등록 정보 |
-| `memories.json` | 장기 기억 데이터 (`is_pinned` 포함) |
-| `sessions/` | 세션 히스토리 (세션별 JSON) |
-| `skills/` | Agent Skills 디렉토리 |
-| `pages/` | 업로드된 HTML 파일 |
+| Pattern | Description |
+|---------|-------------|
+| `rm -rf /` | Recursive root deletion |
+| `:(){ :\|:& };:` | Fork bomb |
+| `dd if=/dev/zero of=/dev/sda` | Disk overwrite |
+| `mkfs.*` | Filesystem format |
+| `> /dev/sda` | Block device write |
+| `curl \| sh`, `wget \| sh` | Pipe-to-shell |
+| `chmod -R 777 /` | Root permission change |
+| `chown -R ... /` | Root ownership change |
+
+### Shell Execution Limits
+
+- **Timeout**: 30s default, 120s maximum
+- **Output truncation**: stdout 30,000 chars, stderr 5,000 chars
+- **Working directory**: Restricted to workspace root
+
+### OS-Native Sandboxing
+
+| Platform | Technology | Isolation |
+|----------|-----------|-----------|
+| macOS | Seatbelt (`sandbox-exec`) | Filesystem + network policies |
+| Linux | bubblewrap (`bwrap`) | Namespace isolation |
+| Windows | Job Objects | Process resource limits |
+
+## Data Storage
+
+All runtime data is stored in `~/.open-agent/` as JSON files:
+
+| File | Description |
+|------|-------------|
+| `.env` | API keys (dotenv) |
+| `settings.json` | LLM, theme, and memory settings |
+| `mcp.json` | MCP server configurations |
+| `skills.json` | Skill enable/disable state |
+| `pages.json` | Page and folder metadata |
+| `workspaces.json` | Registered workspaces |
+| `memories.json` | Long-term memory store |
+| `jobs.json` | Scheduled job definitions |
+| `sessions/` | Per-session message history (JSON files) |
+| `skills/` | User-created skill directories |
+| `pages/` | Uploaded HTML files |
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPENAI_API_KEY` | OpenAI API key | — |
+| `ANTHROPIC_API_KEY` | Anthropic API key | — |
+| `GOOGLE_API_KEY` | Google AI API key | — |
+| `OPEN_AGENT_DEV` | Enable dev mode (`1` = colored logs, CORS `*`) | `0` |
+| `OPEN_AGENT_LOG_LEVEL` | Log level override | `INFO` |
+| `OPEN_AGENT_ENV` | Environment name (`dev` / `prod`) | `prod` |
+
+## Contributing
+
+We welcome contributions! Please see our development workflow:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes with tests
+4. Run the test suite (`uv run pytest`)
+5. Run linting (`uv run ruff check . && uv run ruff format --check .`)
+6. Commit with conventional commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`)
+7. Push and open a Pull Request
+
+### Development Guidelines
+
+- All code, comments, and commits must be in **English**
+- Use `logger` (not `print()`) for all output
+- Type hints required on function signatures
+- No bare `except:` — always specify exception type
+- Use domain exceptions from `core/exceptions.py` instead of `ValueError`
+- Tests required for new features (`tests/unit/` or `tests/integration/`)
+
+## Roadmap
+
+- [ ] **Sprint 2**: Database layer (JSON → SQLite/PostgreSQL, concurrency safety)
+- [ ] **Sprint 3**: Authentication (JWT + RBAC + rate limiting)
+- [ ] **Sprint 4**: Operations (Docker, CI/CD, observability)
+- [ ] Frontend source code open-sourcing (currently pre-built only)
+- [ ] Plugin marketplace for community skills
+- [ ] Multi-agent orchestration
+
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
