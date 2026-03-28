@@ -4,14 +4,30 @@
 
 Python 3.13 + FastAPI 기반. LiteLLM 추상화를 통한 멀티 LLM 지원, MCP(Model Context Protocol) 도구 연동, Agent Skills 실행, Workspace 파일/셸 도구, 장기 기억(Memory) 자동 추출/압축/고정, 세션 관리, SSE 실시간 스트리밍을 제공합니다.
 
-## 실행
+## 설치 및 실행
 
 ```bash
+# 의존성 설치 (uv 사용)
+uv sync
+
+# 개발 환경 (테스트 + lint 포함)
+uv sync --group dev
+
 # 개발 모드
 uv run open-agent start --dev
 
 # 직접 실행
 uv run uvicorn open_agent.server:app --reload --host 127.0.0.1 --port 4821
+```
+
+## 테스트
+
+```bash
+# 전체 테스트 실행
+uv run pytest
+
+# 커버리지 리포트
+uv run pytest --cov --cov-report=term-missing
 ```
 
 ## 구조
@@ -28,6 +44,8 @@ open_agent/
 │   ├── __init__.py
 │   ├── agent.py                # AgentOrchestrator — 도구 라우팅, SSE 스트리밍, 멀티턴 실행
 │   ├── llm.py                  # LLMClient — LiteLLM acompletion 래퍼, API 키 자동 해석
+│   ├── exceptions.py           # OpenAgentError 기반 커스텀 예외 계층 (18개 예외 클래스)
+│   ├── logging.py              # structlog 기반 구조화 로깅 설정
 │   ├── mcp_manager.py          # MCPClientManager — MCP 서버 연결/재시작/도구 탐색
 │   ├── skill_manager.py        # SkillManager — SKILL.md 파싱, 스킬 도구 생성, 스크립트 실행
 │   ├── page_manager.py         # PageManager — HTML 페이지/폴더/북마크 트리 관리
@@ -38,6 +56,7 @@ open_agent/
 │   └── memory_manager.py       # MemoryManager — 추출/압축/고정(Pin)/자동 교체/시스템 프롬프트 주입
 ├── api/                        # FastAPI 라우터 (REST API)
 │   ├── __init__.py
+│   ├── middleware.py            # RequestLoggingMiddleware (request_id + 구조화 접근 로그)
 │   └── endpoints/
 │       ├── __init__.py
 │       ├── chat.py             # POST /api/chat/stream — SSE 스트리밍 채팅
@@ -48,15 +67,22 @@ open_agent/
 │       ├── settings.py         # /api/settings/* — LLM/테마/메모리 설정, 헬스체크
 │       ├── workspace.py        # /api/workspace/* — 워크스페이스 CRUD, 파일 트리/내용
 │       └── memory.py           # /api/memory/* — 메모리 CRUD, 핀 토글, 전체 삭제
-├── models/                     # Pydantic 데이터 모델
+├── models/                     # Pydantic V2 데이터 모델
 │   ├── __init__.py
-│   ├── mcp.py                  # MCPServerConfig, MCPServerStatus
+│   ├── _base.py                # OpenAgentBase (공통 ConfigDict)
+│   ├── error.py                # ErrorResponse, ErrorDetail (표준 에러 스키마)
+│   ├── mcp.py                  # MCPServerConfig, MCPServerStatus, MCPTransport
 │   ├── skill.py                # SkillMeta, SkillInfo
 │   ├── page.py                 # PageItem, FolderItem
-│   ├── session.py              # SessionInfo, SessionMessage
+│   ├── session.py              # SessionInfo, SessionMessage, MessageRole
 │   ├── settings.py             # Settings, LLMSettings, ThemeSettings
+│   ├── job.py                  # JobInfo, JobRunStatus, JobScheduleType
 │   ├── workspace.py            # WorkspaceInfo, FileTreeNode
 │   └── memory.py               # MemoryItem (is_pinned 포함), MemorySettings
+├── tests/                      # pytest 테스트 (50개)
+│   ├── conftest.py             # 전역 fixture (격리 데이터, manager mock, async_client)
+│   ├── unit/                   # 단위 테스트 (SessionManager, MemoryManager)
+│   └── integration/            # 통합 테스트 (FastAPI 엔드포인트)
 └── static/                     # 빌드된 프론트엔드 (wheel에 포함, git에서 제외)
 ```
 
