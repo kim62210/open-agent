@@ -7,19 +7,23 @@ from core.db.models.page import PageORM
 from core.db.models.session import SessionMessageORM, SessionORM
 from core.db.models.settings import SettingsORM
 from core.db.models.skill_config import SkillConfigORM
+from core.db.models.user import APIKeyORM, RefreshTokenORM, UserORM
 from core.db.models.workspace import WorkspaceORM
 
 __all__ = [
+    "APIKeyORM",
     "JobORM",
     "JobRunRecordORM",
     "MCPConfigORM",
     "MemoryORM",
     "PageORM",
+    "RefreshTokenORM",
     "SessionMessageORM",
     "SessionORM",
     "SessionSummaryORM",
     "SettingsORM",
     "SkillConfigORM",
+    "UserORM",
     "WorkspaceORM",
 ]
 
