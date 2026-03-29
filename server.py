@@ -71,6 +71,10 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     await init_db()
 
+    # Migrate legacy JSON files into database (one-time, idempotent)
+    from core.db.migrate import migrate_json_to_db
+    await migrate_json_to_db(data_dir)
+
     # Startup — load from database
     logger.info("Loading settings...")
     await settings_manager.load_from_db()

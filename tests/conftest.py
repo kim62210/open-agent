@@ -1,9 +1,9 @@
-"""전역 테스트 fixture — 격리된 데이터 디렉토리 + 싱글톤 매니저 초기화."""
+"""Global test fixtures — isolated in-memory DB + singleton manager init."""
 
-# ── open_agent 패키지 매핑 ──
-# hatchling packages=["."] 빌드 시 프로젝트 루트가 open_agent 패키지로 매핑됨.
-# editable install에서 디렉토리명(local-agent)과 패키지명(open_agent)이 달라
-# import가 실패할 수 있으므로, 테스트 실행 전 sys.modules에 매핑을 추가한다.
+# -- open_agent package mapping --
+# hatchling packages=["."] maps the project root as the open_agent package at build time.
+# In editable installs the directory name (local-agent) may differ from the package name
+# (open_agent), so we register the mapping in sys.modules before any test imports.
 import importlib
 import sys
 from pathlib import Path as _Path
@@ -11,7 +11,6 @@ from pathlib import Path as _Path
 _PROJECT_ROOT = _Path(__file__).resolve().parent.parent
 
 if "open_agent" not in sys.modules:
-    # 프로젝트 루트의 __init__.py를 open_agent로 로드
     _spec = importlib.util.spec_from_file_location(
         "open_agent",
         _PROJECT_ROOT / "__init__.py",
@@ -22,17 +21,17 @@ if "open_agent" not in sys.modules:
         sys.modules["open_agent"] = _mod
         _spec.loader.exec_module(_mod)
 
-import json
 import logging
-from pathlib import Path
-from typing import Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from core.db.base import Base
 
 logger = logging.getLogger(__name__)
 
-# ── 기본 설정 템플릿 ──
+# -- Default settings template (for SettingsManager tests) --
 
 _DEFAULT_SETTINGS = {
     "llm": {
@@ -70,82 +69,75 @@ _DEFAULT_SETTINGS = {
     },
 }
 
-_CONFIG_FILES = {
-    "settings.json": _DEFAULT_SETTINGS,
-    "sessions.json": {"sessions": {}},
-    "memories.json": {"memories": []},
-    "mcp.json": {"mcpServers": {}},
-    "skills.json": {"disabled": []},
-    "pages.json": {"pages": {}},
-    "workspaces.json": {"workspaces": {}},
-    "jobs.json": {"jobs": {}},
-}
-
-
-def _write_json(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+# -- Database fixtures --
 
 
 @pytest.fixture()
-def tmp_data_dir(tmp_path: Path) -> Path:
-    """격리된 데이터 디렉토리 생성 — 각 테스트마다 새 임시 경로."""
-    data_dir = tmp_path / "open-agent-data"
-    data_dir.mkdir()
+async def db_engine():
+    """In-memory SQLite engine for testing. Tables created, then disposed."""
+    # Import all models so Base.metadata knows every table
+    from core.db.models import register_all_models
+    register_all_models()
 
-    # sessions 하위 디렉토리
-    (data_dir / "sessions").mkdir()
-
-    # JSON 설정 파일 생성
-    for filename, content in _CONFIG_FILES.items():
-        _write_json(data_dir / filename, content)
-
-    return data_dir
+    engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield engine
+    await engine.dispose()
 
 
 @pytest.fixture()
-def session_manager(tmp_data_dir: Path) -> Generator:
-    """격리된 SessionManager 인스턴스 — 테스트 후 싱글톤 복원."""
+async def db_session(db_engine):
+    """Async session bound to the in-memory test engine."""
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as session:
+        yield session
+
+
+@pytest.fixture()
+async def _patch_db_factory(db_engine, monkeypatch):
+    """Patch async_session_factory everywhere managers import it."""
+    import importlib
+    import core.db.engine  # ensure the module is loaded
+
+    _engine_mod = sys.modules["core.db.engine"]
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    monkeypatch.setattr(_engine_mod, "async_session_factory", factory)
+
+
+# -- Manager fixtures --
+
+
+@pytest.fixture()
+async def session_manager(_patch_db_factory):
+    """Isolated SessionManager backed by in-memory DB."""
     from open_agent.core.session_manager import SessionManager
-    from open_agent.core.session_manager import session_manager as _global
 
-    # 테스트용 인스턴스 생성 + 초기화
     mgr = SessionManager()
-    config_path = str(tmp_data_dir / "sessions.json")
-    sessions_dir = str(tmp_data_dir / "sessions")
-    mgr.load_config(config_path, sessions_dir)
-
-    yield mgr
-
-    # 싱글톤 상태 복원은 불필요 (새 인스턴스 사용)
+    return mgr
 
 
 @pytest.fixture()
-def memory_manager(tmp_data_dir: Path) -> Generator:
-    """격리된 MemoryManager 인스턴스 — 테스트 후 싱글톤 복원."""
+async def memory_manager(_patch_db_factory):
+    """Isolated MemoryManager backed by in-memory DB."""
     from open_agent.core.memory_manager import MemoryManager
 
     mgr = MemoryManager()
-    config_path = str(tmp_data_dir / "memories.json")
-    mgr.load_config(config_path)
-
-    yield mgr
+    return mgr
 
 
 @pytest.fixture()
-def settings_manager(tmp_data_dir: Path) -> Generator:
-    """격리된 SettingsManager 인스턴스."""
+async def settings_manager(_patch_db_factory):
+    """Isolated SettingsManager backed by in-memory DB."""
     from open_agent.core.settings_manager import SettingsManager
 
     mgr = SettingsManager()
-    config_path = str(tmp_data_dir / "settings.json")
-    mgr.load_config(config_path)
-
-    yield mgr
+    return mgr
 
 
 @pytest.fixture()
 def mock_llm(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
-    """litellm.acompletion을 mock — LLM 호출 없이 테스트 가능."""
+    """Mock litellm.acompletion so tests run without real LLM calls."""
     mock_message = MagicMock()
     mock_message.content = "mocked response"
     mock_message.reasoning_content = None
@@ -158,41 +150,38 @@ def mock_llm(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 
     async_mock = AsyncMock(return_value=mock_response)
 
-    # memory_manager가 litellm.acompletion을 직접 import하므로 해당 경로 패치
     monkeypatch.setattr("open_agent.core.memory_manager.acompletion", async_mock)
 
     return async_mock
 
 
 @pytest.fixture()
-async def async_client(tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch):
-    """httpx.AsyncClient + ASGITransport로 FastAPI 통합 테스트.
+async def async_client(_patch_db_factory, monkeypatch: pytest.MonkeyPatch):
+    """httpx.AsyncClient + ASGITransport for FastAPI integration tests.
 
-    싱글톤 매니저를 격리된 인스턴스로 교체한 뒤 테스트 클라이언트를 생성합니다.
+    Singleton managers are patched to use the in-memory test DB.
     """
     import httpx
     from httpx import ASGITransport
 
-    # 싱글톤 매니저들의 원본 상태 보존
-    from open_agent.core.session_manager import session_manager as _sm
     from open_agent.core.memory_manager import memory_manager as _mm
+    from open_agent.core.session_manager import session_manager as _sm
     from open_agent.core.settings_manager import settings_manager as _stm
 
-    # 원래 내부 상태 백업
-    orig_sm_sessions = _sm._sessions
-    orig_sm_sessions_dir = _sm._sessions_dir
-    orig_sm_config_path = _sm._config_path
-    orig_mm_memories = _mm._memories
-    orig_mm_config_path = _mm._config_path
+    # Backup original state
+    orig_sm_sessions = _sm._sessions.copy()
+    orig_mm_memories = _mm._memories.copy()
     orig_stm_settings = _stm._settings
-    orig_stm_config_path = _stm._config_path
 
-    # 격리된 데이터로 싱글톤 초기화
-    _stm.load_config(str(tmp_data_dir / "settings.json"))
-    _sm.load_config(str(tmp_data_dir / "sessions.json"), str(tmp_data_dir / "sessions"))
-    _mm.load_config(str(tmp_data_dir / "memories.json"))
+    # Reset singleton state for isolation
+    _sm._sessions.clear()
+    _mm._memories.clear()
 
-    # lifespan 없이 경량 앱 사용 — 라우터만 등록
+    # Initialize settings from defaults (DB-backed but via in-memory SQLite)
+    from open_agent.models.settings import AppSettings
+    _stm._settings = AppSettings(**_DEFAULT_SETTINGS)
+
+    # Lightweight app without lifespan — only register the sessions router
     from fastapi import FastAPI
     from open_agent.api.endpoints import sessions as sessions_router
 
@@ -203,11 +192,7 @@ async def async_client(tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
-    # 싱글톤 상태 복원
+    # Restore singleton state
     _sm._sessions = orig_sm_sessions
-    _sm._sessions_dir = orig_sm_sessions_dir
-    _sm._config_path = orig_sm_config_path
     _mm._memories = orig_mm_memories
-    _mm._config_path = orig_mm_config_path
     _stm._settings = orig_stm_settings
-    _stm._config_path = orig_stm_config_path
