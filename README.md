@@ -467,6 +467,17 @@ All endpoints require authentication unless noted. Pass `Authorization: Bearer <
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `ANTHROPIC_API_KEY` | Anthropic API key | — |
 | `GOOGLE_API_KEY` | Google AI API key | — |
+| `XAI_API_KEY` | xAI (Grok) API key | — |
+| `OPENROUTER_API_KEY` | OpenRouter API key | — |
+| `GROQ_API_KEY` | Groq API key | — |
+| `DEEPSEEK_API_KEY` | DeepSeek API key | — |
+| `MISTRAL_API_KEY` | Mistral AI API key | — |
+| `COHERE_API_KEY` | Cohere API key | — |
+| `TOGETHERAI_API_KEY` | Together AI API key | — |
+| `PERPLEXITYAI_API_KEY` | Perplexity AI API key | — |
+| `FIREWORKS_AI_API_KEY` | Fireworks AI API key | — |
+| `AZURE_API_KEY` | Azure OpenAI API key | — |
+| `HUGGINGFACE_API_KEY` | Hugging Face API key | — |
 | **Database** | | |
 | `DATABASE_URL` | PostgreSQL connection URL | SQLite (auto) |
 | `OPEN_AGENT_DB_ECHO` | Enable SQL query logging (`1`) | `0` |
