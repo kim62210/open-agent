@@ -12,7 +12,11 @@ from fastapi.staticfiles import StaticFiles
 
 from fastapi.responses import JSONResponse
 
-from open_agent.api.endpoints import chat, mcp as mcp_router, skills as skills_router, pages as pages_router, settings as settings_router, sessions as sessions_router, memory as memory_router, workspace as workspace_router, jobs as jobs_router, sandbox as sandbox_router
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from open_agent.api.endpoints import auth as auth_router, chat, mcp as mcp_router, skills as skills_router, pages as pages_router, settings as settings_router, sessions as sessions_router, memory as memory_router, workspace as workspace_router, jobs as jobs_router, sandbox as sandbox_router
+from open_agent.core.auth.rate_limit import limiter
 from open_agent.core.exceptions import (
     AlreadyExistsError,
     InvalidPathError,
@@ -120,6 +124,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Open Agent API", lifespan=lifespan)
 
+# ── Rate limiter (slowapi) ──
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 # ── 전역 예외 핸들러 ──
 
@@ -203,6 +211,7 @@ else:
 app.add_middleware(RequestLoggingMiddleware)
 
 # 라우터 등록
+app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(mcp_router.router, prefix="/api/mcp", tags=["mcp"])
 app.include_router(skills_router.router, prefix="/api/skills", tags=["skills"])
