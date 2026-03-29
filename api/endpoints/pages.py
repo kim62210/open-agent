@@ -2,11 +2,13 @@ import mimetypes
 import os
 import zipfile
 from io import BytesIO
-from typing import List, Optional, Tuple
+from typing import Annotated, List, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
+
+from core.auth.dependencies import require_any, require_user
 
 from open_agent.core.page_manager import page_manager
 from open_agent.core.page_wrapper import is_allowed_extension, needs_wrapper, generate_wrapper, inject_storage_bridge
@@ -24,12 +26,12 @@ router = APIRouter()
 
 
 @router.post("/folders", response_model=PageInfo)
-async def create_folder(req: CreateFolderRequest):
+async def create_folder(req: CreateFolderRequest, current_user: Annotated[dict, Depends(require_user)]):
     return await page_manager.create_folder(req.name, req.description, req.parent_id)
 
 
 @router.get("/breadcrumb/{page_id}", response_model=List[PageInfo])
-async def get_breadcrumb(page_id: str):
+async def get_breadcrumb(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
     page = page_manager.get_page(page_id)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -40,7 +42,7 @@ async def get_breadcrumb(page_id: str):
 
 
 @router.post("/bookmark", response_model=PageInfo)
-async def create_bookmark(req: CreateBookmarkRequest):
+async def create_bookmark(req: CreateBookmarkRequest, current_user: Annotated[dict, Depends(require_user)]):
     return await page_manager.add_bookmark(
         name=req.name,
         url=req.url,
@@ -53,7 +55,7 @@ async def create_bookmark(req: CreateBookmarkRequest):
 
 
 @router.post("/check-frameable/{page_id}")
-async def check_frameable(page_id: str):
+async def check_frameable(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
     page = page_manager.get_page(page_id)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -66,13 +68,13 @@ async def check_frameable(page_id: str):
 
 
 @router.post("/deactivate")
-async def deactivate_page():
+async def deactivate_page(current_user: Annotated[dict, Depends(require_user)]):
     page_manager.deactivate_page()
     return {"status": "deactivated"}
 
 
 @router.get("/active/current", response_model=Optional[PageInfo])
-async def get_active_page():
+async def get_active_page(current_user: Annotated[dict, Depends(require_any)]):
     return page_manager.get_active_page()
 
 
@@ -80,7 +82,7 @@ async def get_active_page():
 
 
 @router.get("/published/list", response_model=List[PageInfo])
-async def list_published_pages():
+async def list_published_pages(current_user: Annotated[dict, Depends(require_any)]):
     return page_manager.get_published_pages()
 
 
@@ -88,14 +90,14 @@ async def list_published_pages():
 
 
 @router.get("/", response_model=List[PageInfo])
-async def list_pages(parent_id: Optional[str] = None):
+async def list_pages(current_user: Annotated[dict, Depends(require_any)], parent_id: Optional[str] = None):
     if parent_id is not None:
         return page_manager.get_children(parent_id if parent_id != "null" else None)
     return page_manager.get_all()
 
 
 @router.get("/{page_id}", response_model=PageInfo)
-async def get_page(page_id: str):
+async def get_page(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
     page = page_manager.get_page(page_id)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -103,7 +105,7 @@ async def get_page(page_id: str):
 
 
 @router.get("/{page_id}/raw")
-async def get_page_raw(page_id: str):
+async def get_page_raw(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
     page = page_manager.get_page(page_id)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -115,14 +117,14 @@ async def get_page_raw(page_id: str):
 
 
 @router.get("/{page_id}/__version__")
-async def get_page_version(page_id: str):
+async def get_page_version(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
     """Return page version for live-reload polling."""
     v = page_manager.get_version(page_id)
     return JSONResponse({"v": v}, headers={"Cache-Control": "no-cache, no-store"})
 
 
 @router.get("/{page_id}/content/{file_path:path}")
-async def get_bundle_file(page_id: str, file_path: str):
+async def get_bundle_file(page_id: str, file_path: str, current_user: Annotated[dict, Depends(require_any)]):
     page = page_manager.get_page(page_id)
     resolved = page_manager.get_bundle_file_path(page_id, file_path)
     if not resolved:
@@ -140,7 +142,7 @@ async def get_bundle_file(page_id: str, file_path: str):
 
 
 @router.get("/{page_id}/content")
-async def get_page_content(page_id: str):
+async def get_page_content(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
     page = page_manager.get_page(page_id)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -165,6 +167,7 @@ async def get_page_content(page_id: str):
 
 @router.post("/upload-bundle", response_model=PageInfo)
 async def upload_bundle(
+    current_user: Annotated[dict, Depends(require_user)],
     files: List[UploadFile] = File(...),
     name: str = Form(...),
     description: str = Form(""),
@@ -236,6 +239,7 @@ def _extract_zip(data: bytes) -> List[Tuple[str, bytes]]:
 
 @router.post("/upload", response_model=PageInfo)
 async def upload_page(
+    current_user: Annotated[dict, Depends(require_user)],
     file: UploadFile = File(...),
     name: str = Form(...),
     description: str = Form(""),
@@ -258,7 +262,7 @@ class ImportPathRequest(BaseModel):
 
 
 @router.post("/import", response_model=PageInfo)
-async def import_page_from_path(req: ImportPathRequest):
+async def import_page_from_path(req: ImportPathRequest, current_user: Annotated[dict, Depends(require_user)]):
     try:
         return await page_manager.add_page_from_path(req.name, req.description, req.path, parent_id=req.parent_id)
     except Exception as e:
@@ -266,7 +270,7 @@ async def import_page_from_path(req: ImportPathRequest):
 
 
 @router.patch("/{page_id}", response_model=PageInfo)
-async def update_page(page_id: str, req: UpdatePageRequest):
+async def update_page(page_id: str, req: UpdatePageRequest, current_user: Annotated[dict, Depends(require_user)]):
     # Distinguish "not provided" vs "explicitly null" for parent_id
     parent_id = req.parent_id if "parent_id" in req.model_fields_set else "__unset__"
     page = await page_manager.update_page(
@@ -281,7 +285,7 @@ async def update_page(page_id: str, req: UpdatePageRequest):
 
 
 @router.delete("/{page_id}")
-async def delete_page(page_id: str):
+async def delete_page(page_id: str, current_user: Annotated[dict, Depends(require_user)]):
     if not await page_manager.delete_page(page_id):
         raise HTTPException(status_code=404, detail="Page not found")
     return {"status": "deleted"}
@@ -291,7 +295,7 @@ async def delete_page(page_id: str):
 
 
 @router.post("/{page_id}/activate", response_model=PageInfo)
-async def activate_page(page_id: str):
+async def activate_page(page_id: str, current_user: Annotated[dict, Depends(require_user)]):
     page = page_manager.activate_page(page_id)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found or is a folder")
@@ -306,7 +310,7 @@ class PublishRequest(BaseModel):
 
 
 @router.post("/{page_id}/publish", response_model=PageInfo)
-async def publish_page(page_id: str, req: PublishRequest = PublishRequest()):
+async def publish_page(page_id: str, current_user: Annotated[dict, Depends(require_user)], req: PublishRequest = PublishRequest()):
     page = await page_manager.publish_page(page_id, True, password=req.password)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found or not publishable")
@@ -314,7 +318,7 @@ async def publish_page(page_id: str, req: PublishRequest = PublishRequest()):
 
 
 @router.post("/{page_id}/unpublish", response_model=PageInfo)
-async def unpublish_page(page_id: str):
+async def unpublish_page(page_id: str, current_user: Annotated[dict, Depends(require_user)]):
     page = await page_manager.publish_page(page_id, False)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -325,7 +329,7 @@ async def unpublish_page(page_id: str):
 
 
 @router.get("/{page_id}/files")
-async def list_page_files(page_id: str):
+async def list_page_files(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
     files = page_manager.list_page_files(page_id)
     if files is None:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -333,7 +337,7 @@ async def list_page_files(page_id: str):
 
 
 @router.get("/{page_id}/files/{file_path:path}")
-async def read_page_file(page_id: str, file_path: str):
+async def read_page_file(page_id: str, file_path: str, current_user: Annotated[dict, Depends(require_any)]):
     content = page_manager.read_page_file(page_id, file_path)
     if content is None:
         raise HTTPException(status_code=404, detail="File not found")
@@ -341,7 +345,7 @@ async def read_page_file(page_id: str, file_path: str):
 
 
 @router.put("/{page_id}/files/{file_path:path}")
-async def write_page_file(page_id: str, file_path: str, body: dict):
+async def write_page_file(page_id: str, file_path: str, body: dict, current_user: Annotated[dict, Depends(require_user)]):
     content = body.get("content")
     if content is None:
         raise HTTPException(status_code=400, detail="content is required")
@@ -359,7 +363,7 @@ class KVSetRequest(BaseModel):
 
 
 @router.get("/{page_id}/kv")
-async def kv_list_keys(page_id: str):
+async def kv_list_keys(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
     keys = page_manager.kv_list(page_id)
     if keys is None:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -367,7 +371,7 @@ async def kv_list_keys(page_id: str):
 
 
 @router.get("/{page_id}/kv/{key:path}")
-async def kv_get(page_id: str, key: str):
+async def kv_get(page_id: str, key: str, current_user: Annotated[dict, Depends(require_any)]):
     if not page_manager.get_page(page_id):
         raise HTTPException(status_code=404, detail="Page not found")
     value = page_manager.kv_get(page_id, key)
@@ -377,7 +381,7 @@ async def kv_get(page_id: str, key: str):
 
 
 @router.put("/{page_id}/kv/{key:path}")
-async def kv_set(page_id: str, key: str, req: KVSetRequest):
+async def kv_set(page_id: str, key: str, req: KVSetRequest, current_user: Annotated[dict, Depends(require_user)]):
     if not page_manager.get_page(page_id):
         raise HTTPException(status_code=404, detail="Page not found")
     page_manager.kv_set(page_id, key, req.value)
@@ -385,7 +389,7 @@ async def kv_set(page_id: str, key: str, req: KVSetRequest):
 
 
 @router.delete("/{page_id}/kv/{key:path}")
-async def kv_delete(page_id: str, key: str):
+async def kv_delete(page_id: str, key: str, current_user: Annotated[dict, Depends(require_user)]):
     if not page_manager.get_page(page_id):
         raise HTTPException(status_code=404, detail="Page not found")
     if not page_manager.kv_delete(page_id, key):

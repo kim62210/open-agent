@@ -1,7 +1,9 @@
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
+
+from core.auth.dependencies import require_admin, require_any, require_user
 
 from open_agent.core.skill_manager import skill_manager
 from open_agent.core.workflow_router import workflow_router
@@ -16,7 +18,7 @@ router = APIRouter()
 
 
 @router.get("/workflows")
-async def list_workflows():
+async def list_workflows(current_user: Annotated[dict, Depends(require_any)]):
     """번들 워크플로우 목록 반환."""
     return [
         {"name": name, "description": summary}
@@ -25,12 +27,12 @@ async def list_workflows():
 
 
 @router.get("/", response_model=List[SkillInfo])
-async def list_skills():
+async def list_skills(current_user: Annotated[dict, Depends(require_any)]):
     return [s for s in skill_manager.get_all_skills() if not s.is_bundled]
 
 
 @router.get("/{name}", response_model=SkillDetail)
-async def get_skill(name: str):
+async def get_skill(name: str, current_user: Annotated[dict, Depends(require_any)]):
     detail = skill_manager.load_skill_content(name)
     if not detail:
         raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
@@ -38,7 +40,7 @@ async def get_skill(name: str):
 
 
 @router.post("/", response_model=SkillInfo)
-async def create_skill(req: CreateSkillRequest):
+async def create_skill(req: CreateSkillRequest, current_user: Annotated[dict, Depends(require_user)]):
     try:
         return skill_manager.create_skill(req.name, req.description, req.instructions)
     except Exception as e:
@@ -46,7 +48,7 @@ async def create_skill(req: CreateSkillRequest):
 
 
 @router.delete("/{name}")
-async def delete_skill(name: str):
+async def delete_skill(name: str, current_user: Annotated[dict, Depends(require_user)]):
     skill = skill_manager.get_skill(name)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
@@ -58,7 +60,7 @@ async def delete_skill(name: str):
 
 
 @router.patch("/{name}", response_model=SkillInfo)
-async def update_skill(name: str, req: UpdateSkillRequest):
+async def update_skill(name: str, req: UpdateSkillRequest, current_user: Annotated[dict, Depends(require_user)]):
     result = await skill_manager.update_skill(
         name,
         description=req.description,
@@ -71,7 +73,7 @@ async def update_skill(name: str, req: UpdateSkillRequest):
 
 
 @router.post("/{name}/execute")
-async def execute_script(name: str, script: str, args: Optional[List[str]] = None):
+async def execute_script(name: str, script: str, current_user: Annotated[dict, Depends(require_user)], args: Optional[List[str]] = None):
     skill = skill_manager.get_skill(name)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
@@ -80,14 +82,14 @@ async def execute_script(name: str, script: str, args: Optional[List[str]] = Non
 
 
 @router.post("/reload")
-async def reload_skills():
+async def reload_skills(current_user: Annotated[dict, Depends(require_admin)]):
     if skill_manager._base_dirs:
         skill_manager.discover_skills([str(d) for d in skill_manager._base_dirs])
     return {"status": "reloaded", "count": len(skill_manager.get_all_skills())}
 
 
 @router.post("/upload", response_model=SkillInfo)
-async def upload_skill_zip(file: UploadFile = File(...)):
+async def upload_skill_zip(current_user: Annotated[dict, Depends(require_user)], file: UploadFile = File(...)):
     """zip 파일을 업로드하여 스킬 등록"""
     if not file.filename or not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="zip 파일만 업로드 가능합니다.")
@@ -103,7 +105,7 @@ class ImportPathRequest(BaseModel):
 
 
 @router.post("/import", response_model=SkillInfo)
-async def import_skill_from_path(req: ImportPathRequest):
+async def import_skill_from_path(req: ImportPathRequest, current_user: Annotated[dict, Depends(require_user)]):
     """로컬 경로의 스킬 폴더를 등록"""
     try:
         return skill_manager.import_from_path(req.path)
@@ -114,7 +116,7 @@ async def import_skill_from_path(req: ImportPathRequest):
 # ── 스크립트/참조 파일 읽기·쓰기 ──────────────────────────────
 
 @router.get("/{name}/scripts/{script_name}")
-async def read_script(name: str, script_name: str):
+async def read_script(name: str, script_name: str, current_user: Annotated[dict, Depends(require_any)]):
     """스킬의 스크립트 파일 내용을 읽습니다."""
     from pathlib import Path
     skill = skill_manager.get_skill(name)
@@ -132,7 +134,7 @@ class UpdateFileRequest(BaseModel):
 
 
 @router.put("/{name}/scripts/{script_name}")
-async def write_script(name: str, script_name: str, req: UpdateFileRequest):
+async def write_script(name: str, script_name: str, req: UpdateFileRequest, current_user: Annotated[dict, Depends(require_user)]):
     """스킬의 스크립트 파일 내용을 수정합니다."""
     from pathlib import Path
     skill = skill_manager.get_skill(name)
@@ -151,7 +153,7 @@ async def write_script(name: str, script_name: str, req: UpdateFileRequest):
 
 
 @router.get("/{name}/references/{ref_path:path}")
-async def read_reference(name: str, ref_path: str):
+async def read_reference(name: str, ref_path: str, current_user: Annotated[dict, Depends(require_any)]):
     """스킬의 참조 파일 내용을 읽습니다."""
     content = skill_manager.load_skill_reference(name, ref_path)
     if content is None:
@@ -160,7 +162,7 @@ async def read_reference(name: str, ref_path: str):
 
 
 @router.put("/{name}/references/{ref_path:path}")
-async def write_reference(name: str, ref_path: str, req: UpdateFileRequest):
+async def write_reference(name: str, ref_path: str, req: UpdateFileRequest, current_user: Annotated[dict, Depends(require_user)]):
     """스킬의 참조 파일 내용을 수정합니다."""
     from pathlib import Path
     skill = skill_manager.get_skill(name)

@@ -1,9 +1,12 @@
-"""Sandbox 에스컬레이션 API 엔드포인트"""
+"""Sandbox escalation API endpoints"""
 
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+
+from core.auth.dependencies import require_user
 
 from open_agent.core.sandbox import SandboxPolicy, sandbox_manager
 
@@ -28,7 +31,7 @@ class PolicyStatusResponse(BaseModel):
 
 
 @router.get("/policy")
-async def get_policy() -> PolicyStatusResponse:
+async def get_policy(current_user: Annotated[dict, Depends(require_user)]) -> PolicyStatusResponse:
     """현재 샌드박스 정책 상태 조회"""
     support = sandbox_manager.check_support()
     effective = sandbox_manager._get_effective_policy()
@@ -41,7 +44,7 @@ async def get_policy() -> PolicyStatusResponse:
 
 
 @router.post("/escalate")
-async def handle_escalation(req: EscalationRequest):
+async def handle_escalation(req: EscalationRequest, current_user: Annotated[dict, Depends(require_user)]):
     """에스컬레이션 승인/거부 처리 — 승인 시 원래 명령 재실행"""
     if not req.approved:
         result = sandbox_manager.deny_escalation()
@@ -93,7 +96,7 @@ async def handle_escalation(req: EscalationRequest):
 
 
 @router.post("/reset")
-async def reset_policy():
+async def reset_policy(current_user: Annotated[dict, Depends(require_user)]):
     """샌드박스 정책을 기본값으로 초기화"""
     sandbox_manager.reset_policy()
     return {"message": "Policy reset to workspace_write"}

@@ -1,11 +1,14 @@
 import asyncio
 import json
 import logging
+from typing import Annotated, Any, Dict, List, Tuple
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
-from typing import List, Dict, Any, Tuple
+
+from core.auth.dependencies import require_user
+from core.auth.rate_limit import limiter
 from open_agent.core.agent import orchestrator
 from open_agent.core.memory_manager import memory_manager
 
@@ -106,14 +109,19 @@ async def _enqueue_turn(messages: List[Dict[str, Any]], assistant_content: str):
 
 
 @router.post("/")
-async def chat(request: ChatRequest):
+@limiter.limit("20/minute")
+async def chat(
+    request: Request,
+    body: ChatRequest,
+    current_user: Annotated[dict, Depends(require_user)],
+):
     try:
-        response = await orchestrator.run(request.messages, forced_workflow=request.forced_workflow)
+        response = await orchestrator.run(body.messages, forced_workflow=body.forced_workflow)
 
         # Enqueue for batched memory extraction
         try:
             assistant_content = _safe_get_content(response)
-            await _enqueue_turn(request.messages, assistant_content)
+            await _enqueue_turn(body.messages, assistant_content)
         except Exception as e:
             logger.debug(f"Memory extraction trigger failed: {e}")
 
@@ -123,15 +131,20 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest):
+@limiter.limit("10/minute")
+async def chat_stream(
+    request: Request,
+    body: ChatRequest,
+    current_user: Annotated[dict, Depends(require_user)],
+):
     async def event_generator():
         try:
-            async for event in orchestrator.run_stream(request.messages, skip_routing=request.skip_routing, forced_workflow=request.forced_workflow):
+            async for event in orchestrator.run_stream(body.messages, skip_routing=body.skip_routing, forced_workflow=body.forced_workflow):
                 # done 이벤트 시 yield 전에 메모리 enqueue (generator 종료 후 코드 미실행 방지)
                 if event["type"] == "done":
                     try:
                         assistant_content = _safe_get_content(event.get("full_response") or {})
-                        await _enqueue_turn(request.messages, assistant_content)
+                        await _enqueue_turn(body.messages, assistant_content)
                     except Exception as e:
                         logger.debug(f"Memory extraction trigger failed: {e}")
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"

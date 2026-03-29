@@ -1,9 +1,10 @@
 import asyncio
 import logging
-from typing import List
+from typing import Annotated, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from core.auth.dependencies import require_any, require_user
 from open_agent.core.llm import llm_client
 from open_agent.core.memory_manager import memory_manager
 from open_agent.core.session_manager import session_manager
@@ -22,7 +23,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=List[SessionInfo])
-async def list_sessions():
+async def list_sessions(current_user: Annotated[dict, Depends(require_any)]):
     return session_manager.get_all()
 
 
@@ -45,14 +46,14 @@ async def _summarize_previous_session() -> None:
 
 
 @router.post("/", response_model=SessionInfo)
-async def create_session(req: CreateSessionRequest):
+async def create_session(req: CreateSessionRequest, current_user: Annotated[dict, Depends(require_user)]):
     # 새 세션 생성 전, 이전 세션을 백그라운드에서 요약
     asyncio.create_task(_summarize_previous_session())
     return await session_manager.create_session(req.title)
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
-async def get_session(session_id: str):
+async def get_session(session_id: str, current_user: Annotated[dict, Depends(require_any)]):
     info = session_manager.get_session(session_id)
     if not info:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -61,7 +62,7 @@ async def get_session(session_id: str):
 
 
 @router.put("/{session_id}/messages", response_model=SessionInfo)
-async def save_messages(session_id: str, req: SaveMessagesRequest):
+async def save_messages(session_id: str, req: SaveMessagesRequest, current_user: Annotated[dict, Depends(require_user)]):
     result = await session_manager.save_messages(session_id, req.messages)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -69,7 +70,7 @@ async def save_messages(session_id: str, req: SaveMessagesRequest):
 
 
 @router.patch("/{session_id}", response_model=SessionInfo)
-async def update_session(session_id: str, req: UpdateSessionRequest):
+async def update_session(session_id: str, req: UpdateSessionRequest, current_user: Annotated[dict, Depends(require_user)]):
     result = await session_manager.update_session(session_id, req.title)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -77,7 +78,7 @@ async def update_session(session_id: str, req: UpdateSessionRequest):
 
 
 @router.get("/{session_id}/context")
-async def get_context_status(session_id: str):
+async def get_context_status(session_id: str, current_user: Annotated[dict, Depends(require_any)]):
     """세션의 현재 컨텍스트 사용 상태를 반환합니다 (경량 토큰 카운팅)."""
     info = session_manager.get_session(session_id)
     if not info:
@@ -99,7 +100,7 @@ async def get_context_status(session_id: str):
 
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, current_user: Annotated[dict, Depends(require_user)]):
     if not await session_manager.delete_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "deleted"}

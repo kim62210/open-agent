@@ -4,9 +4,12 @@ import logging
 import os
 import time
 import urllib.request
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from litellm import acompletion
+
+from core.auth.dependencies import require_admin, require_any, require_user
 
 from open_agent import __version__
 from open_agent.core.settings_manager import settings_manager
@@ -119,7 +122,7 @@ async def health_check():
 
 
 @router.get("/llm", response_model=LLMSettings)
-async def get_llm_settings():
+async def get_llm_settings(current_user: Annotated[dict, Depends(require_any)]):
     # api_key를 응답에서 마스킹
     llm = settings_manager.llm.model_copy()
     if llm.api_key:
@@ -128,7 +131,7 @@ async def get_llm_settings():
 
 
 @router.patch("/llm", response_model=LLMSettings)
-async def update_llm_settings(req: UpdateLLMRequest):
+async def update_llm_settings(req: UpdateLLMRequest, current_user: Annotated[dict, Depends(require_admin)]):
     updated = await settings_manager.update_llm(**req.model_dump(exclude_unset=True))
     # api_key를 응답에서 마스킹
     result = updated.model_copy()
@@ -138,32 +141,32 @@ async def update_llm_settings(req: UpdateLLMRequest):
 
 
 @router.get("/memory", response_model=MemorySettings)
-async def get_memory_settings():
+async def get_memory_settings(current_user: Annotated[dict, Depends(require_any)]):
     return settings_manager.memory
 
 
 @router.patch("/memory", response_model=MemorySettings)
-async def update_memory_settings(req: UpdateMemorySettingsRequest):
+async def update_memory_settings(req: UpdateMemorySettingsRequest, current_user: Annotated[dict, Depends(require_admin)]):
     return await settings_manager.update_memory(**req.model_dump(exclude_unset=True))
 
 
 @router.get("/profile", response_model=ProfileSettings)
-async def get_profile():
+async def get_profile(current_user: Annotated[dict, Depends(require_any)]):
     return settings_manager.profile
 
 
 @router.patch("/profile", response_model=ProfileSettings)
-async def update_profile(req: UpdateProfileRequest):
+async def update_profile(req: UpdateProfileRequest, current_user: Annotated[dict, Depends(require_any)]):
     return await settings_manager.update_profile(**req.model_dump(exclude_unset=True))
 
 
 @router.get("/theme", response_model=ThemeSettings)
-async def get_theme():
+async def get_theme(current_user: Annotated[dict, Depends(require_any)]):
     return settings_manager.theme
 
 
 @router.patch("/theme", response_model=ThemeSettings)
-async def update_theme(req: UpdateThemeRequest):
+async def update_theme(req: UpdateThemeRequest, current_user: Annotated[dict, Depends(require_any)]):
     return await settings_manager.update_theme(**req.model_dump(exclude_unset=True))
 
 
@@ -176,7 +179,7 @@ class ValidateModelRequest(PydanticBaseModel):
 
 
 @router.post("/validate-model")
-async def validate_model(req: ValidateModelRequest):
+async def validate_model(req: ValidateModelRequest, current_user: Annotated[dict, Depends(require_user)]):
     """LiteLLM으로 모델 호출 가능 여부 검증"""
     api_key = req.api_key or LLMClient._resolve_api_key(req.model)
 
@@ -205,7 +208,7 @@ async def validate_model(req: ValidateModelRequest):
 # --- Custom Models CRUD ---
 
 @router.get("/custom-models", response_model=list[CustomModel])
-async def get_custom_models():
+async def get_custom_models(current_user: Annotated[dict, Depends(require_any)]):
     return settings_manager.custom_models
 
 
@@ -216,12 +219,12 @@ class AddCustomModelRequest(PydanticBaseModel):
 
 
 @router.post("/custom-models", response_model=list[CustomModel])
-async def add_custom_model(req: AddCustomModelRequest):
+async def add_custom_model(req: AddCustomModelRequest, current_user: Annotated[dict, Depends(require_admin)]):
     return await settings_manager.add_custom_model(req.label, req.model, req.provider)
 
 
 @router.delete("/custom-models", response_model=list[CustomModel])
-async def remove_custom_model(model: str):
+async def remove_custom_model(model: str, current_user: Annotated[dict, Depends(require_admin)]):
     return await settings_manager.remove_custom_model(model)
 
 
@@ -374,7 +377,7 @@ def _discover_provider(provider: str) -> list[dict]:
 
 
 @router.get("/models/discover")
-async def discover_models(provider: str | None = None):
+async def discover_models(current_user: Annotated[dict, Depends(require_user)], provider: str | None = None):
     """API 키가 설정된 프로바이더에서 사용 가능한 모델 목록을 동적으로 조회합니다.
 
     - provider 지정 시 해당 프로바이더만, 생략 시 전체 조회

@@ -1,7 +1,9 @@
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from core.auth.dependencies import require_user
 
 from open_agent.core.mcp_manager import mcp_manager
 from open_agent.models.mcp import MCPServerConfig, MCPServerInfo, MCPToolInfo
@@ -29,13 +31,13 @@ class UpdateServerRequest(BaseModel):
 # --- Config endpoints ---
 
 @router.get("/config")
-async def get_config() -> Dict[str, Any]:
+async def get_config(current_user: Annotated[dict, Depends(require_user)]) -> Dict[str, Any]:
     """Return full mcp.json content."""
     return mcp_manager.get_raw_config()
 
 
 @router.put("/config")
-async def update_config(config: Dict[str, Any]) -> Dict[str, Any]:
+async def update_config(config: Dict[str, Any], current_user: Annotated[dict, Depends(require_user)]) -> Dict[str, Any]:
     """Overwrite full mcp.json and reload."""
     servers = config.get("mcpServers", {})
     # Validate all configs
@@ -53,7 +55,7 @@ async def update_config(config: Dict[str, Any]) -> Dict[str, Any]:
 # --- Server CRUD endpoints ---
 
 @router.get("/servers", response_model=List[MCPServerInfo])
-async def list_servers():
+async def list_servers(current_user: Annotated[dict, Depends(require_user)]):
     """List all MCP servers with status."""
     infos = mcp_manager.get_all_server_statuses()
     # Populate tools for connected servers
@@ -64,7 +66,7 @@ async def list_servers():
 
 
 @router.get("/servers/{name}", response_model=MCPServerInfo)
-async def get_server(name: str):
+async def get_server(name: str, current_user: Annotated[dict, Depends(require_user)]):
     """Get specific server details."""
     try:
         info = mcp_manager.get_server_status(name)
@@ -76,7 +78,7 @@ async def get_server(name: str):
 
 
 @router.post("/servers", response_model=MCPServerInfo)
-async def add_server(req: AddServerRequest):
+async def add_server(req: AddServerRequest, current_user: Annotated[dict, Depends(require_user)]):
     """Add a new MCP server and connect."""
     if req.name in mcp_manager._configs:
         raise HTTPException(status_code=409, detail=f"Server '{req.name}' already exists")
@@ -90,7 +92,7 @@ async def add_server(req: AddServerRequest):
 
 
 @router.delete("/servers/{name}")
-async def delete_server(name: str):
+async def delete_server(name: str, current_user: Annotated[dict, Depends(require_user)]):
     """Delete an MCP server."""
     if name not in mcp_manager._configs:
         raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
@@ -100,7 +102,7 @@ async def delete_server(name: str):
 
 
 @router.patch("/servers/{name}", response_model=MCPServerInfo)
-async def update_server(name: str, req: UpdateServerRequest):
+async def update_server(name: str, req: UpdateServerRequest, current_user: Annotated[dict, Depends(require_user)]):
     """Update server config (partial). Reconnects if transport/connection params change."""
     if name not in mcp_manager._configs:
         raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
@@ -137,7 +139,7 @@ async def update_server(name: str, req: UpdateServerRequest):
 # --- Connection control endpoints ---
 
 @router.post("/servers/{name}/connect", response_model=MCPServerInfo)
-async def connect_server(name: str):
+async def connect_server(name: str, current_user: Annotated[dict, Depends(require_user)]):
     """Manually connect to a server."""
     if name not in mcp_manager._configs:
         raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
@@ -149,7 +151,7 @@ async def connect_server(name: str):
 
 
 @router.post("/servers/{name}/disconnect", response_model=MCPServerInfo)
-async def disconnect_server(name: str):
+async def disconnect_server(name: str, current_user: Annotated[dict, Depends(require_user)]):
     """Manually disconnect from a server."""
     if name not in mcp_manager._configs:
         raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
@@ -158,7 +160,7 @@ async def disconnect_server(name: str):
 
 
 @router.post("/servers/{name}/restart", response_model=MCPServerInfo)
-async def restart_server(name: str):
+async def restart_server(name: str, current_user: Annotated[dict, Depends(require_user)]):
     """Restart a server (disconnect + connect)."""
     if name not in mcp_manager._configs:
         raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
@@ -173,7 +175,7 @@ async def restart_server(name: str):
 # --- Tool endpoints ---
 
 @router.get("/tools", response_model=List[MCPToolInfo])
-async def list_all_tools():
+async def list_all_tools(current_user: Annotated[dict, Depends(require_user)]):
     """List all tools from all connected servers."""
     all_tools: List[MCPToolInfo] = []
     for name in mcp_manager._connections:
@@ -183,7 +185,7 @@ async def list_all_tools():
 
 
 @router.get("/tools/{server_name}", response_model=List[MCPToolInfo])
-async def list_server_tools(server_name: str):
+async def list_server_tools(server_name: str, current_user: Annotated[dict, Depends(require_user)]):
     """List tools from a specific server."""
     if server_name not in mcp_manager._configs:
         raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found")
@@ -193,7 +195,7 @@ async def list_server_tools(server_name: str):
 # --- Reload endpoint ---
 
 @router.post("/reload")
-async def reload_config():
+async def reload_config(current_user: Annotated[dict, Depends(require_user)]):
     """Reload mcp.json and reconcile connections."""
     await mcp_manager.reload_config()
     return {"message": "Config reloaded", "servers": len(mcp_manager._configs)}
