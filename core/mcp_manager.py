@@ -1,18 +1,19 @@
 import asyncio
+import json
 import logging
 import shutil
 import time
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import httpx
 from mcp import ClientSession, StdioServerParameters, types
-from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
+from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
-
 from open_agent.core.exceptions import ConfigError, NotFoundError
 from open_agent.models.mcp import (
     MCPServerConfig,
@@ -22,6 +23,19 @@ from open_agent.models.mcp import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Circuit Breaker configuration (inspired by ATLAS soft-fail pattern)
+_CIRCUIT_FAILURE_THRESHOLD = 3
+_CIRCUIT_RECOVERY_TIMEOUT = 60.0  # seconds before half-open
+
+
+@dataclass
+class _CircuitState:
+    """Per-server circuit breaker state."""
+
+    failures: int = 0
+    last_failure_at: float = 0.0
+    state: str = "closed"  # "closed" | "open" | "half-open"
 
 
 def parse_namespaced_tool(name: str) -> Tuple[str, str]:
@@ -44,6 +58,47 @@ class MCPClientManager:
         self._connected_at: Dict[str, Optional[datetime]] = {}
         # Phase 1: Tool schema cache (server_name -> (timestamp, tools))
         self._tool_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+        self._circuits: Dict[str, _CircuitState] = {}
+
+    def _check_circuit(self, server_name: str) -> bool:
+        """Return True if the request should proceed, False if circuit is open."""
+        circuit = self._circuits.get(server_name)
+        if circuit is None or circuit.state == "closed":
+            return True
+        if circuit.state == "open":
+            if time.monotonic() - circuit.last_failure_at > _CIRCUIT_RECOVERY_TIMEOUT:
+                circuit.state = "half-open"
+                logger.info(
+                    "Circuit breaker half-open for '%s', allowing probe request", server_name
+                )
+                return True
+            return False
+        # half-open: allow one probe request
+        return True
+
+    def _record_success(self, server_name: str) -> None:
+        """Record a successful call — reset circuit if half-open."""
+        circuit = self._circuits.get(server_name)
+        if circuit is None:
+            return
+        if circuit.state == "half-open":
+            logger.info("Circuit breaker closed for '%s' after successful probe", server_name)
+        circuit.failures = 0
+        circuit.state = "closed"
+
+    def _record_failure(self, server_name: str) -> None:
+        """Record a failed call — open circuit if threshold reached."""
+        circuit = self._circuits.setdefault(server_name, _CircuitState())
+        circuit.failures += 1
+        circuit.last_failure_at = time.monotonic()
+        if circuit.failures >= _CIRCUIT_FAILURE_THRESHOLD and circuit.state != "open":
+            circuit.state = "open"
+            logger.warning(
+                "Circuit breaker OPEN for '%s' after %d failures (recovery in %.0fs)",
+                server_name,
+                circuit.failures,
+                _CIRCUIT_RECOVERY_TIMEOUT,
+            )
 
     async def load_from_db(self) -> None:
         """Load MCP server configs from database."""
@@ -162,6 +217,8 @@ class MCPClientManager:
             self._statuses[server_name] = MCPServerStatus.connected
             self._connected_at[server_name] = datetime.now(timezone.utc)
             self._tool_cache.pop(server_name, None)  # 캐시 무효화
+            # Reset circuit breaker on successful connection
+            self._circuits.pop(server_name, None)
             logger.info(f"Connected to MCP server: {server_name}")
 
         except Exception as e:
@@ -221,6 +278,13 @@ class MCPClientManager:
             if (now - cached_at) < self._CACHE_TTL:
                 return cached_tools
 
+        # Circuit breaker: skip fetch if circuit is open
+        if not self._check_circuit(server_name):
+            # Return cached tools if available, empty list otherwise
+            if server_name in self._tool_cache:
+                return self._tool_cache[server_name][1]
+            return []
+
         if server_name not in self._connections:
             return []
         _, session = self._connections[server_name]
@@ -228,10 +292,11 @@ class MCPClientManager:
             result = await session.list_tools()
             server_tools = self._format_tools(server_name, result.tools)
             self._tool_cache[server_name] = (now, server_tools)
+            self._record_success(server_name)
             return server_tools
         except Exception as e:
             logger.error(f"Failed to list tools from '{server_name}': {e}")
-            # 캐시에 이전 값이 있으면 사용
+            self._record_failure(server_name)
             if server_name in self._tool_cache:
                 return self._tool_cache[server_name][1]
             return []
@@ -267,6 +332,13 @@ class MCPClientManager:
         if server_name not in self._connections:
             return f"Error: Server '{server_name}' is not connected"
 
+        # Circuit breaker check
+        if not self._check_circuit(server_name):
+            return (
+                f"Error: Server '{server_name}' circuit breaker is open "
+                f"(too many failures, will retry after {_CIRCUIT_RECOVERY_TIMEOUT:.0f}s)"
+            )
+
         _, session = self._connections[server_name]
         try:
             sanitized = json.loads(json.dumps(arguments))
@@ -287,11 +359,15 @@ class MCPClientManager:
                     texts.append(str(content))
             output = "\n".join(texts) if texts else "Tool executed successfully (no output)"
             if result.isError:
+                self._record_failure(server_name)
                 return f"Error: MCP tool '{tool_name}' failed: {output}"
+            self._record_success(server_name)
             return output
         except asyncio.TimeoutError:
+            self._record_failure(server_name)
             return f"Error: MCP tool '{tool_name}' on '{server_name}' timed out after 120s"
         except Exception as e:
+            self._record_failure(server_name)
             return f"Error calling tool '{tool_name}' on '{server_name}': {str(e)}"
 
     def get_server_status(self, name: str) -> MCPServerInfo:
