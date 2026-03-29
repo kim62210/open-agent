@@ -249,6 +249,7 @@ open-agent/
 | Pattern | Location | Purpose |
 |---------|----------|---------|
 | **Repository Pattern** | `core/db/repositories/` | Generic `BaseRepository[T]` abstracts DB CRUD operations |
+| **Concurrency Safety** | `core/*_manager.py` | `asyncio.Lock` on all mutation paths in singleton managers |
 | **Deferred Tool Loading** | `core/tool_registry.py` | Tools loaded on-demand via `find_tools` to save LLM context |
 | **3-Tier Fallback** | `core/grep_engine.py` | Rust native → subprocess (ripgrep) → pure Python |
 | **ReAct Loop** | `core/agent.py` | Reason + Act loop with configurable max rounds |
@@ -508,6 +509,20 @@ export DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/open_agent
 SQLite settings: WAL journal mode, 5s busy timeout, single-connection pool.
 PostgreSQL settings: pool_size=5, max_overflow=10.
 
+### Schema Migrations (Alembic)
+
+Open Agent uses [Alembic](https://alembic.sqlalchemy.org/) for database schema migrations. When upgrading, run:
+
+```bash
+uv run alembic upgrade head
+```
+
+To generate a new migration after modifying ORM models:
+
+```bash
+uv run alembic revision --autogenerate -m "description of change"
+```
+
 ### Migration from JSON
 
 Existing installations using JSON files are **automatically migrated** to the database on first startup. Original JSON files are preserved. A `.migrated` marker prevents re-migration.
@@ -639,7 +654,8 @@ We welcome contributions! Please follow this workflow:
 - [x] Sprint 1: Foundation (pyproject.toml, structured logging, exceptions, Pydantic V2, tests)
 - [x] Sprint 2: Database layer (SQLite/PostgreSQL, async repositories, JSON migration)
 - [x] Sprint 3: Authentication (JWT + RBAC + API keys + rate limiting)
-- [ ] Sprint 4: Operations (Docker, CI/CD, observability)
+- [x] Sprint 4a: P0 Critical Fixes (Alembic, concurrency safety, race conditions, exception handling)
+- [ ] Sprint 4b: Operations (Docker, CI/CD, observability)
 - [ ] Frontend source code open-sourcing
 - [ ] Plugin marketplace for community skills
 - [ ] Multi-agent orchestration

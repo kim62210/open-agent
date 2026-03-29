@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.7] - 2026-03-29
+
+### Added — P0 Critical Fixes
+- **Alembic migration framework** — async-compatible `env.py` with `_build_database_url()` integration, standard migration template, and `versions/` directory for schema evolution
+- **asyncio.Lock on all 7 manager singletons** — prevents data corruption under concurrent requests (session, settings, workspace, job, mcp, skill, page managers)
+- Deadlock-safe internal method extraction (`_*_unlocked` pattern) for managers with self-referencing calls
+
+### Fixed
+- **`_prev_workflow` race condition** — moved from singleton instance attribute to `_RequestState` dataclass, isolating workflow routing per request
+- **13 silent `except Exception:` blocks** — added proper logging (`logger.debug` for expected failures, `logger.warning` for unexpected) across 10 files: server.py, agent.py, llm.py, sandbox.py, job_scheduler.py, job_manager.py, mcp_manager.py, page_manager.py
+
+### Dependencies
+- Added `alembic>=1.14.0`
+
+---
+
 ## [0.8.6] - 2026-03-29
 
 ### Added — Sprint 3: Authentication & Authorization

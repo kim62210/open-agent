@@ -33,7 +33,13 @@ Open Agent is a **local-first AI agent platform** built with Python/FastAPI. It 
 - **SQLite is the default** — zero configuration, WAL mode for concurrency, single-connection pool
 - PostgreSQL via `DATABASE_URL` env var for multi-user deployments
 - All managers use the Repository pattern (`BaseRepository[T]`) — never raw SQL in business logic
+- **Alembic** for schema migrations — run `uv run alembic upgrade head` after model changes
 - Legacy JSON files are auto-migrated on first startup (one-time, idempotent)
+
+### Concurrency
+- All 7 manager singletons protected with `asyncio.Lock` on mutation paths
+- Per-request state isolation via `_RequestState` dataclass in `core/agent.py`
+- Deadlock-safe pattern: internal calls use `_*_unlocked()` private methods
 
 ### Authentication
 - **Dual auth**: JWT Bearer tokens (browser) + `X-API-Key` header (programmatic)
