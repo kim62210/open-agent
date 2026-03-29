@@ -108,7 +108,7 @@ static/         → Pre-built Next.js frontend (do not modify)
 ## Running Tests
 
 ```bash
-# All tests (78 passing)
+# All tests (140 passing)
 uv run pytest
 
 # With coverage
