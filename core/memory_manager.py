@@ -6,8 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from litellm import acompletion
-
+from open_agent.core.llm import llm_client
 from open_agent.models.memory import MemoryCategory, MemoryItem, MemorySource
 
 logger = logging.getLogger(__name__)
@@ -82,18 +81,6 @@ SESSION_SUMMARY_PROMPT = """You are a session summary assistant. Summarize the f
 6. Return ONLY the bullet points, no headers or formatting.
 
 ## Summary:"""
-
-
-def _extract_llm_content(response) -> str:
-    """Extract content from LLM response, with reasoning model fallback."""
-    msg = response.choices[0].message
-    content = msg.content
-    if content:
-        return content.strip()
-    reasoning = getattr(msg, "reasoning_content", None)
-    if reasoning:
-        return reasoning.strip()
-    return ""
 
 
 class MemoryManager:
@@ -356,22 +343,11 @@ class MemoryManager:
         prompt = SESSION_SUMMARY_PROMPT.format(conversation=conversation)
 
         try:
-            llm = settings_manager.llm
-            from open_agent.core.llm import LLMClient
-            api_key = llm.api_key or LLMClient._resolve_api_key(llm.model)
-
-            kwargs = {
-                "model": llm.model,
-                "api_key": api_key,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": LLMClient._safe_temperature(llm.model, 0.3),
-                "max_tokens": 512,
-            }
-            if llm.api_base:
-                kwargs["api_base"] = llm.api_base
-
-            response = await acompletion(**kwargs)
-            summary = _extract_llm_content(response)
+            summary = await llm_client.simple_completion(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=512,
+            )
 
             if not summary:
                 return None
@@ -527,9 +503,6 @@ class MemoryManager:
             if len(unpinned) < 4:
                 return 0
 
-            from open_agent.core.settings_manager import settings_manager
-            llm = settings_manager.llm
-
             all_mems = sorted(unpinned, key=lambda m: m.created_at, reverse=True)
             memories_data = [
                 {"id": m.id, "content": m.content, "category": m.category, "confidence": m.confidence}
@@ -543,21 +516,11 @@ class MemoryManager:
             )
 
             try:
-                from open_agent.core.llm import LLMClient
-                api_key = llm.api_key or LLMClient._resolve_api_key(llm.model)
-
-                kwargs = {
-                    "model": llm.model,
-                    "api_key": api_key,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": LLMClient._safe_temperature(llm.model, 0.2),
-                    "max_tokens": 4096,
-                }
-                if llm.api_base:
-                    kwargs["api_base"] = llm.api_base
-
-                response = await acompletion(**kwargs)
-                raw = _extract_llm_content(response)
+                raw = await llm_client.simple_completion(
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=4096,
+                )
 
                 if not raw:
                     return 0
@@ -695,22 +658,11 @@ class MemoryManager:
         )
 
         try:
-            llm = settings_manager.llm
-            from open_agent.core.llm import LLMClient
-            api_key = llm.api_key or LLMClient._resolve_api_key(llm.model)
-
-            kwargs = {
-                "model": llm.model,
-                "api_key": api_key,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": LLMClient._safe_temperature(llm.model, 0.3),
-                "max_tokens": 1024,
-            }
-            if llm.api_base:
-                kwargs["api_base"] = llm.api_base
-
-            response = await acompletion(**kwargs)
-            raw = _extract_llm_content(response)
+            raw = await llm_client.simple_completion(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1024,
+            )
 
             if not raw:
                 logger.info("Memory extraction: LLM returned empty content")
