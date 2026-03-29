@@ -23,7 +23,7 @@
   <img src="https://img.shields.io/badge/python-3.13%2B-blue" alt="Python 3.13+">
   <img src="https://img.shields.io/badge/framework-FastAPI-009688" alt="FastAPI">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
-  <img src="https://img.shields.io/badge/tests-78%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-140%20passing-brightgreen" alt="Tests">
 </p>
 
 ---
