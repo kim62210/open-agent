@@ -827,163 +827,26 @@ class AgentOrchestrator:
             logger.error("Tool call error (%s): %s", function_name, e)
             return f"Error: {e}"
 
-    async def run(self, messages: List[Dict[str, Any]], *, skip_routing: bool = False, forced_workflow: str | None = None) -> Dict[str, Any]:
-        # Shallow copy to avoid mutating the caller's list
-        messages = list(messages)
-        # Per-request local state (싱글톤 경합 조건 방지)
-        state = _RequestState()
-        response = None  # H-10: UnboundLocalError 방지
+    async def _run_core(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        skip_routing: bool = False,
+        forced_workflow: str | None = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Core agent loop that yields typed event dicts.
 
-        # Inject system prompt with skill metadata + relevance-filtered memory
-        last_user_msg = self._extract_last_user_message(messages)
-        has_error = False
-        empty_retries = 0
-        error_guide_injected = False
-
-        # 워크플로우 라우팅: 명시적 선택 우선, 없으면 LLM 라우팅 (대화 맥락 포함)
-        workflow_match = None
-        if forced_workflow:
-            workflow_match = skill_manager.get_workflow_body(forced_workflow)
-        elif last_user_msg and not skip_routing:
-            routed_name = await workflow_router.route(
-                last_user_msg,
-                messages=messages,
-                prev_workflow=state.prev_workflow,
-            )
-            if routed_name:
-                workflow_match = skill_manager.get_workflow_body(routed_name)
-
-        # Update previous workflow in per-request state
-        state.prev_workflow = workflow_match["name"] if workflow_match else None
-
-        system_prompt = self._build_system_prompt(
-            user_input=last_user_msg, workflow_match=workflow_match,
-        )
-        if system_prompt:
-            messages = [{"role": "system", "content": system_prompt}] + messages
-
-        all_tools = await self._build_tools(user_message=last_user_msg, state=state)
-
-        # Multi-round tool call loop
-        max_rounds = max(settings_manager.llm.max_tool_rounds, 0)  # H-10: 음수 방지
-        _tool_choice_override = None  # 빈 응답 재시도 시 다음 라운드 tool_choice 오버라이드
-        # 워크플로우 활성화 시 reasoning_effort 상향 (복잡한 작업은 더 깊은 추론 필요)
-        _effort = "high" if workflow_match else None
-        for round_num in range(max_rounds + 1):
-            # 적응형 컨텍스트 압축: 사용률 기반 (레거시 고정 라운드 대체)
-            messages, _ = await self._maybe_compact_context(messages, all_tools)
-
-            tool_choice = _tool_choice_override or self._resolve_tool_choice(messages, all_tools, round_num)
-            _tool_choice_override = None  # 사용 후 리셋
-
-            response = await self.llm.chat_completion(
-                messages,
-                tools=all_tools if all_tools else None,
-                tool_choice=tool_choice,
-                reasoning_effort=_effort,
-            )
-
-            choices = response.get("choices") or []
-            if not choices:
-                logger.warning("LLM returned empty choices list")
-                break
-            message = choices[0]["message"]
-
-            # No tool calls — return final response
-            if not message.get("tool_calls"):
-                content = (message.get("content") or "").strip()
-                # LLM이 빈 응답을 반환한 경우 — 점진적 재시도
-                if not content and empty_retries < _MAX_EMPTY_RETRIES:
-                    empty_retries += 1
-                    # 이전 라운드에서 이미 도구를 사용했으면 데이터 충분 → 바로 respond_directly 강제
-                    has_prior_tools = any(m.get("role") == "tool" for m in messages)
-                    if has_prior_tools:
-                        logger.warning("LLM returned empty after tool results on round %d, forcing respond_directly (%d/%d)", round_num, empty_retries, _MAX_EMPTY_RETRIES)
-                        _tool_choice_override = _FORCE_RESPOND_TOOL_CHOICE
-                    elif empty_retries == 1:
-                        # 도구 미사용 상태 1차: tool_choice="required" — 모델이 도구를 자율 선택
-                        logger.warning("LLM returned empty on round %d, retrying with tool_choice=required (%d/%d)", round_num, empty_retries, _MAX_EMPTY_RETRIES)
-                        _tool_choice_override = "required"
-                    else:
-                        # 2차: respond_directly 강제
-                        logger.warning("LLM returned empty on round %d, forcing respond_directly (%d/%d)", round_num, empty_retries, _MAX_EMPTY_RETRIES)
-                        _tool_choice_override = _FORCE_RESPOND_TOOL_CHOICE
-                    continue
-
-                # 재시도 소진 후에도 빈 응답 — 도구 결과가 있으면 도구 없이 최종 호출
-                if not content and any(m.get("role") == "tool" for m in messages):
-                    logger.warning("All empty retries exhausted with tool results present, recovery call without tools")
-                    messages.append({"role": "user", "content": "위 도구 결과를 바탕으로 사용자의 질문에 답변해주세요."})
-                    recovery = await self.llm.chat_completion(messages, tools=None)
-                    recovery_content = (recovery["choices"][0]["message"].get("content") or "").strip()
-                    if recovery_content:
-                        return recovery
-                return response
-
-            tool_calls = message["tool_calls"]
-
-            # respond_directly 이스케이프: 텍스트 응답으로 변환하여 즉시 반환
-            if len(tool_calls) == 1 and tool_calls[0]["function"]["name"] == "respond_directly":
-                try:
-                    args = json.loads(tool_calls[0]["function"]["arguments"]) if isinstance(tool_calls[0]["function"]["arguments"], str) else tool_calls[0]["function"]["arguments"]
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-                return {"choices": [{"message": {"role": "assistant", "content": args.get("message", "")}}]}
-
-            # Safety: max rounds reached
-            if round_num >= max_rounds:
-                logger.warning("Max tool call rounds (%d) reached, returning last response", max_rounds)
-                return response
-
-            # Process tool calls — 병렬 실행 후 순서대로 메시지 추가
-            messages.append(message)
-
-            results = await asyncio.gather(
-                *(self._execute_tool_call_safe(tc, state=state) for tc in tool_calls)
-            )
-
-            # C14: 라운드별 총합 예산을 도구 수로 균등 분배
-            round_budget = self._get_dynamic_tool_result_limit(messages, all_tools)
-            per_tool_limit = max(5000, round_budget // max(len(tool_calls), 1))
-
-            for tool_call, result in zip(tool_calls, results):
-                # C-00c: 에스컬레이션 dict 처리 (run_stream과 동일)
-                if isinstance(result, dict) and result.get("__escalation__"):
-                    content_for_llm = f"[권한 요청] {result.get('description', 'escalation')}"
-                    success = True
-                else:
-                    content_for_llm, success = self._process_tool_result(result, max_chars=per_tool_limit)
-                if not success:
-                    has_error = True
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "name": tool_call["function"]["name"],
-                    "content": content_for_llm,
-                })
-
-            logger.debug("Tool round %d complete, %d tool(s) executed (parallel)", round_num + 1, len(tool_calls))
-
-            # 첫 에러 발생 시 에러 가이드를 시스템 프롬프트에 추가 (전체 재구축 대신 append)
-            if has_error and not error_guide_injected and messages[0].get("role") == "system":
-                messages[0]["content"] += "\n\n" + ERROR_HANDLING_PROMPT
-                error_guide_injected = True
-
-            # find_tools 호출 시 도구 목록 갱신 (deferred mode)
-            if any(tc["function"]["name"] == "find_tools" for tc in tool_calls):
-                all_tools = await self._build_tools(state=state)
-
-            # 주기적 자기 점검: 장기 루프에서 방향을 잃지 않도록 진행 상황 정리 유도
-            if (round_num + 1) % _SELF_ASSESSMENT_INTERVAL == 0 and round_num + 1 < max_rounds:
-                messages.append({"role": "system", "content": _SELF_ASSESSMENT_PROMPT})
-                logger.debug("Self-assessment injected at round %d", round_num + 1)
-
-        if response is None:
-            return {"choices": [{"message": {"role": "assistant", "content": "응답을 생성할 수 없습니다."}}]}
-        return response
-
-    async def run_stream(self, messages: List[Dict[str, Any]], *, skip_routing: bool = False, forced_workflow: str | None = None) -> AsyncGenerator[Dict[str, Any], None]:
-        """run()과 동일한 로직이지만 각 단계를 SSE 이벤트로 yield하는 제너레이터."""
+        Events:
+          thinking           — status message for UI
+          workflow_activated  — workflow matched
+          context_status     — context window usage stats
+          content_delta      — streaming text chunk
+          tool_call          — tool invocation started
+          tool_result        — tool execution result
+          escalation_request — sandbox escalation
+          content            — final full text content
+          done               — stream complete with full_response
+        """
         messages = list(messages)
         # Per-request local state (싱글톤 경합 조건 방지)
         state = _RequestState()
@@ -1229,6 +1092,42 @@ class AgentOrchestrator:
             if (round_num + 1) % _SELF_ASSESSMENT_INTERVAL == 0 and round_num + 1 < max_rounds:
                 messages.append({"role": "system", "content": _SELF_ASSESSMENT_PROMPT})
                 logger.debug("Self-assessment injected at round %d", round_num + 1)
+
+    async def run(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        skip_routing: bool = False,
+        forced_workflow: str | None = None,
+    ) -> Dict[str, Any]:
+        """Non-streaming entry point — consumes _run_core() events and returns the final result."""
+        last_response: Dict[str, Any] | None = None
+        async for event in self._run_core(
+            messages, skip_routing=skip_routing, forced_workflow=forced_workflow,
+        ):
+            event_type = event.get("type")
+            if event_type == "done":
+                return event["full_response"]
+            if event_type == "escalation_request":
+                # Return escalation as a special response for non-streaming callers
+                return {"__escalation__": True, **event}
+        # Fallback if no done event was yielded
+        return last_response or {
+            "choices": [{"message": {"role": "assistant", "content": "응답을 생성할 수 없습니다."}}],
+        }
+
+    async def run_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        skip_routing: bool = False,
+        forced_workflow: str | None = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Streaming wrapper — yields all events from _run_core()."""
+        async for event in self._run_core(
+            messages, skip_routing=skip_routing, forced_workflow=forced_workflow,
+        ):
+            yield event
 
 
 orchestrator = AgentOrchestrator()
