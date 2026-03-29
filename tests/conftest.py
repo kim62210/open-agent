@@ -22,6 +22,7 @@ if "open_agent" not in sys.modules:
         _spec.loader.exec_module(_mod)
 
 import logging
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -95,6 +96,38 @@ async def db_session(db_engine):
 
 
 @pytest.fixture()
+async def test_user(db_engine):
+    """Create a test user and return user dict."""
+    from core.auth.password import hash_password
+    from core.db.models.user import UserORM
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as session:
+        user = UserORM(
+            id="test-user-id",
+            email="test@example.com",
+            username="testuser",
+            password_hash=hash_password("testpass123"),
+            role="user",
+            is_active=True,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        session.add(user)
+        await session.commit()
+    return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "user"}
+
+
+@pytest.fixture()
+async def auth_headers(test_user):
+    """JWT auth headers for test requests."""
+    from core.auth.jwt import create_access_token
+
+    token = create_access_token({"sub": test_user["id"], "role": test_user["role"]})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture()
 async def _patch_db_factory(db_engine, monkeypatch):
     """Patch async_session_factory everywhere managers import it."""
     import importlib
@@ -103,6 +136,10 @@ async def _patch_db_factory(db_engine, monkeypatch):
     _engine_mod = sys.modules["core.db.engine"]
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
     monkeypatch.setattr(_engine_mod, "async_session_factory", factory)
+
+    # Also patch any module that copied the reference at import time
+    if "core.auth.dependencies" in sys.modules:
+        monkeypatch.setattr(sys.modules["core.auth.dependencies"], "async_session_factory", factory)
 
 
 # -- Manager fixtures --
@@ -160,6 +197,8 @@ async def async_client(_patch_db_factory, monkeypatch: pytest.MonkeyPatch):
     """httpx.AsyncClient + ASGITransport for FastAPI integration tests.
 
     Singleton managers are patched to use the in-memory test DB.
+    Auth dependencies are overridden to return a fake user so session
+    endpoints that require authentication work without a real JWT.
     """
     import httpx
     from httpx import ASGITransport
@@ -188,6 +227,14 @@ async def async_client(_patch_db_factory, monkeypatch: pytest.MonkeyPatch):
     test_app = FastAPI()
     test_app.include_router(sessions_router.router, prefix="/api/sessions")
 
+    # Override auth dependency so session tests don't need a real JWT
+    from core.auth.dependencies import get_current_user
+
+    async def _fake_current_user() -> dict:
+        return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "admin"}
+
+    test_app.dependency_overrides[get_current_user] = _fake_current_user
+
     transport = ASGITransport(app=test_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
@@ -196,3 +243,37 @@ async def async_client(_patch_db_factory, monkeypatch: pytest.MonkeyPatch):
     _sm._sessions = orig_sm_sessions
     _mm._memories = orig_mm_memories
     _stm._settings = orig_stm_settings
+
+
+@pytest.fixture()
+async def auth_client(_patch_db_factory):
+    """httpx.AsyncClient wired to auth + session routers with real auth dependencies.
+
+    Uses the patched in-memory DB so JWT validation lookups hit the test DB.
+    Rate limiting is disabled to avoid 429 errors across test isolation boundaries.
+    """
+    import httpx
+    from httpx import ASGITransport
+
+    from fastapi import FastAPI
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from core.auth.rate_limit import limiter
+    from open_agent.api.endpoints import auth as auth_router
+    from open_agent.api.endpoints import sessions as sessions_router
+
+    # Disable rate limiting for tests
+    limiter.enabled = False
+
+    test_app = FastAPI()
+    test_app.state.limiter = limiter
+    test_app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    test_app.include_router(auth_router.router, prefix="/api/auth")
+    test_app.include_router(sessions_router.router, prefix="/api/sessions")
+
+    transport = ASGITransport(app=test_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+    # Re-enable rate limiting after tests
+    limiter.enabled = True
