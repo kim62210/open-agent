@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from typing import List, Dict, Any, AsyncGenerator, Optional
@@ -59,6 +60,19 @@ _PROVIDER_KEY_MAP: Dict[str, str | None] = {
     "ollama_chat/": None,
 }
 
+# Retry configuration (inspired by ATLAS Ralph Loop)
+_MAX_LLM_RETRIES = 3
+_BASE_RETRY_DELAY = 1.0  # seconds
+_TEMP_INCREMENT = 0.05   # temperature increase per retry
+
+# Errors that should NOT be retried (immediate failure)
+_UNRECOVERABLE_ERRORS = (
+    "invalid_api_key", "authentication_error", "AuthenticationError",
+    "model_not_found", "NotFoundError",
+    "context_length_exceeded", "ContextWindowExceededError",
+    "content_policy_violation", "ContentPolicyViolationError",
+)
+
 
 class Message(BaseModel):
     role: str
@@ -91,6 +105,16 @@ class LLMClient:
             if any(model_lower.startswith(p) for p in REASONING_EFFORT_PROVIDERS):
                 config["reasoning_effort"] = llm.reasoning_effort
         return config
+
+    @staticmethod
+    def _is_unrecoverable(exc: Exception) -> bool:
+        """Check if an exception is unrecoverable and should not be retried."""
+        exc_str = str(exc)
+        exc_type = type(exc).__name__
+        return any(
+            err in exc_str or err in exc_type
+            for err in _UNRECOVERABLE_ERRORS
+        )
 
     @staticmethod
     def _resolve_api_key(model: str) -> str | None:
@@ -307,32 +331,58 @@ class LLMClient:
                 kwargs["parallel_tool_calls"] = True
 
         self._clamp_max_tokens(kwargs, tools)
-        response = await acompletion(**kwargs)
-        result = response.model_dump()
 
-        # Reasoning model compat: use reasoning_content when content/tool_calls both empty
-        try:
-            msg = result.get("choices", [{}])[0].get("message", {})
-            if not msg.get("content") and not msg.get("tool_calls"):
-                reasoning = getattr(
-                    response.choices[0].message, "reasoning_content", None,
-                )
-                if reasoning:
-                    if not tools:
-                        # Pure conversation without tools: use reasoning as content
-                        msg["content"] = reasoning
-                    else:
-                        # Tool call context: preserve reasoning as hint for agent retry
-                        msg["_reasoning_content"] = reasoning
-                        logger.debug(
-                            "Reasoning model returned empty with tools, "
-                            "reasoning_content preserved as hint (%d chars)",
-                            len(reasoning),
+        base_temp = kwargs.get("temperature", 0.7)
+        last_exc: Exception | None = None
+
+        for attempt in range(_MAX_LLM_RETRIES):
+            try:
+                if attempt > 0:
+                    kwargs["temperature"] = min(
+                        base_temp + attempt * _TEMP_INCREMENT, 1.5
+                    )
+                response = await acompletion(**kwargs)
+                result = response.model_dump()
+
+                # reasoning model compat: use reasoning_content when
+                # content/tool_calls are both empty
+                try:
+                    msg = result.get("choices", [{}])[0].get("message", {})
+                    if not msg.get("content") and not msg.get("tool_calls"):
+                        reasoning = getattr(
+                            response.choices[0].message,
+                            "reasoning_content",
+                            None,
                         )
-        except (IndexError, AttributeError):
-            pass
+                        if reasoning:
+                            if not tools:
+                                msg["content"] = reasoning
+                            else:
+                                msg["_reasoning_content"] = reasoning
+                                logger.debug(
+                                    "Reasoning model returned empty with tools, "
+                                    "reasoning_content preserved as hint (%d chars)",
+                                    len(reasoning),
+                                )
+                except (IndexError, AttributeError):
+                    pass
 
-        return result
+                return result
+            except Exception as exc:
+                if self._is_unrecoverable(exc):
+                    raise
+                last_exc = exc
+                delay = _BASE_RETRY_DELAY * (2 ** attempt)
+                logger.warning(
+                    "LLM chat_completion failed (attempt %d/%d), "
+                    "retrying in %.1fs: %s",
+                    attempt + 1, _MAX_LLM_RETRIES, delay, exc,
+                )
+                await asyncio.sleep(delay)
+
+        raise RuntimeError(
+            f"LLM chat_completion failed after {_MAX_LLM_RETRIES} retries"
+        ) from last_exc
 
     async def simple_completion(
         self,
@@ -399,8 +449,35 @@ class LLMClient:
 
         self._clamp_max_tokens(kwargs, tools)
 
+        # Retry on initial stream connection (inspired by ATLAS Ralph Loop)
+        base_temp = kwargs.get("temperature", 0.7)
+        last_exc: Exception | None = None
+
         try:
-            response = await acompletion(**kwargs)
+            for attempt in range(_MAX_LLM_RETRIES):
+                try:
+                    if attempt > 0:
+                        kwargs["temperature"] = min(
+                            base_temp + attempt * _TEMP_INCREMENT, 1.5
+                        )
+                    response = await acompletion(**kwargs)
+                    break
+                except Exception as exc:
+                    if self._is_unrecoverable(exc):
+                        raise
+                    last_exc = exc
+                    delay = _BASE_RETRY_DELAY * (2 ** attempt)
+                    logger.warning(
+                        "LLM chat_stream connection failed (attempt %d/%d), "
+                        "retrying in %.1fs: %s",
+                        attempt + 1, _MAX_LLM_RETRIES, delay, exc,
+                    )
+                    await asyncio.sleep(delay)
+            else:
+                raise RuntimeError(
+                    f"LLM chat_stream failed after {_MAX_LLM_RETRIES} retries"
+                ) from last_exc
+
             full_content = ""
             # Accumulate tool call deltas by index
             tool_call_acc: Dict[int, Dict[str, Any]] = {}
