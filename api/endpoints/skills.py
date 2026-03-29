@@ -52,14 +52,14 @@ async def delete_skill(name: str):
         raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
     if skill.is_bundled:
         raise HTTPException(status_code=403, detail=f"번들 스킬 '{name}'은(는) 삭제할 수 없습니다.")
-    if not skill_manager.delete_skill(name):
+    if not await skill_manager.delete_skill(name):
         raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
     return {"status": "deleted", "name": name}
 
 
 @router.patch("/{name}", response_model=SkillInfo)
 async def update_skill(name: str, req: UpdateSkillRequest):
-    result = skill_manager.update_skill(
+    result = await skill_manager.update_skill(
         name,
         description=req.description,
         instructions=req.instructions,

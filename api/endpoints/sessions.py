@@ -35,7 +35,7 @@ async def _summarize_previous_session() -> None:
         prev = sessions[0]  # 가장 최근 세션
         if prev.message_count < 4:  # 최소 4개 메시지 (2턴)
             return
-        messages_objs = session_manager.get_messages(prev.id)
+        messages_objs = await session_manager.get_messages(prev.id)
         if not messages_objs:
             return
         messages = [m.model_dump(exclude_none=True) for m in messages_objs]
@@ -48,7 +48,7 @@ async def _summarize_previous_session() -> None:
 async def create_session(req: CreateSessionRequest):
     # 새 세션 생성 전, 이전 세션을 백그라운드에서 요약
     asyncio.create_task(_summarize_previous_session())
-    return session_manager.create_session(req.title)
+    return await session_manager.create_session(req.title)
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
@@ -56,13 +56,13 @@ async def get_session(session_id: str):
     info = session_manager.get_session(session_id)
     if not info:
         raise HTTPException(status_code=404, detail="Session not found")
-    messages = session_manager.get_messages(session_id) or []
+    messages = await session_manager.get_messages(session_id) or []
     return SessionDetail(info=info, messages=messages)
 
 
 @router.put("/{session_id}/messages", response_model=SessionInfo)
 async def save_messages(session_id: str, req: SaveMessagesRequest):
-    result = session_manager.save_messages(session_id, req.messages)
+    result = await session_manager.save_messages(session_id, req.messages)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
     return result
@@ -70,7 +70,7 @@ async def save_messages(session_id: str, req: SaveMessagesRequest):
 
 @router.patch("/{session_id}", response_model=SessionInfo)
 async def update_session(session_id: str, req: UpdateSessionRequest):
-    result = session_manager.update_session(session_id, req.title)
+    result = await session_manager.update_session(session_id, req.title)
     if not result:
         raise HTTPException(status_code=404, detail="Session not found")
     return result
@@ -82,7 +82,7 @@ async def get_context_status(session_id: str):
     info = session_manager.get_session(session_id)
     if not info:
         raise HTTPException(status_code=404, detail="Session not found")
-    messages_objs = session_manager.get_messages(session_id)
+    messages_objs = await session_manager.get_messages(session_id)
     if not messages_objs:
         return {"context_window": 0, "used_tokens": 0, "available_tokens": 0, "usage_ratio": 0, "compact_threshold": settings_manager.llm.compact_threshold}
     messages = [m.model_dump(exclude_none=True) for m in messages_objs]
@@ -100,6 +100,6 @@ async def get_context_status(session_id: str):
 
 @router.delete("/{session_id}")
 async def delete_session(session_id: str):
-    if not session_manager.delete_session(session_id):
+    if not await session_manager.delete_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "deleted"}

@@ -15,7 +15,6 @@ from open_agent.models.page import PageInfo
 
 logger = logging.getLogger(__name__)
 
-
 def _check_frameable(url: str) -> bool:
     """Check if a URL allows being framed by inspecting response headers."""
     try:
@@ -45,7 +44,6 @@ class PageManager:
     def __init__(self):
         self._pages: Dict[str, PageInfo] = {}
         self._pages_dir: Optional[Path] = None
-        self._config_path: Optional[Path] = None
         self._active_page_id: Optional[str] = None
         self._versions: Dict[str, int] = {}  # page_id -> version (ms timestamp)
 
@@ -57,7 +55,8 @@ class PageManager:
         """Get current page version for live-reload polling."""
         return self._versions.get(page_id, 0)
 
-    def load_config(self, config_path: str, pages_dir: str) -> None:
+    def init_pages_dir(self, pages_dir: str) -> None:
+        """Initialize the pages filesystem directory."""
         pages_path = Path(pages_dir)
         if not pages_path.is_absolute():
             from open_agent.config import get_pages_dir
@@ -65,128 +64,77 @@ class PageManager:
         self._pages_dir = pages_path
         self._pages_dir.mkdir(parents=True, exist_ok=True)
 
-        path = Path(config_path)
-        if not path.is_absolute():
-            from open_agent.config import get_config_path
-            path = get_config_path(config_path)
-        self._config_path = path
+    async def load_from_db(self) -> None:
+        """Load all page metadata from database into in-memory cache."""
+        from core.db.engine import async_session_factory
+        from core.db.repositories.page_repo import PageRepository
 
-        if not path.exists():
-            path.write_text(json.dumps({"pages": {}}, indent=2), encoding="utf-8")
-            self._pages = {}
-            return
-
-        data = json.loads(path.read_text(encoding="utf-8"))
-
-        # --- Migration: old format with "categories" key ---
-        needs_migration = "categories" in data and data["categories"]
-        if needs_migration:
-            logger.info("Migrating old categories format to folder-based tree structure...")
-            cat_to_folder: Dict[str, str] = {}
-
-            # Convert categories to folder pages
-            for cid, info in data["categories"].items():
-                folder_id = cid  # reuse category id
-                self._pages[folder_id] = PageInfo(
-                    id=folder_id,
-                    name=info["name"],
-                    description=info.get("description", ""),
-                    content_type="folder",
-                    parent_id=None,
-                )
-                cat_to_folder[cid] = folder_id
-
-            # Load pages with category_id -> parent_id conversion
-            for pid, info in data.get("pages", {}).items():
-                content_type = info.get("content_type", "html")
-                filename = info.get("filename")
+        async with async_session_factory() as session:
+            repo = PageRepository(session)
+            rows = await repo.get_all()
+            self._pages.clear()
+            for row in rows:
+                # Recompute size from filesystem
                 size = 0
-                if filename and self._pages_dir:
-                    file_path = self._pages_dir / filename
-                    size = file_path.stat().st_size if file_path.exists() else 0
-
-                old_cat_id = info.get("category_id")
-                parent_id = cat_to_folder.get(old_cat_id) if old_cat_id else None
-
-                self._pages[pid] = PageInfo(
-                    id=pid,
-                    name=info["name"],
-                    description=info.get("description", ""),
-                    content_type=content_type,
-                    parent_id=parent_id,
-                    filename=filename,
-                    size_bytes=size,
-                    url=info.get("url"),
-                    frameable=info.get("frameable"),
-                )
-
-            self._save_config()
-            logger.info(f"Migration complete: {len(cat_to_folder)} categories -> folders")
-        else:
-            # Normal load (new format)
-            for pid, info in data.get("pages", {}).items():
-                content_type = info.get("content_type", "html")
-                filename = info.get("filename")
-                entry_file = info.get("entry_file")
-                size = 0
-                if content_type == "bundle" and self._pages_dir:
-                    bundle_dir = self._pages_dir / pid
+                if row.content_type == "bundle" and self._pages_dir:
+                    bundle_dir = self._pages_dir / row.id
                     size = self._compute_size(bundle_dir)
-                elif filename and self._pages_dir:
-                    file_path = self._pages_dir / filename
+                elif row.filename and self._pages_dir:
+                    file_path = self._pages_dir / row.filename
                     size = file_path.stat().st_size if file_path.exists() else 0
 
-                self._pages[pid] = PageInfo(
-                    id=pid,
-                    name=info["name"],
-                    description=info.get("description", ""),
-                    content_type=content_type,
-                    parent_id=info.get("parent_id"),
-                    filename=filename,
+                self._pages[row.id] = PageInfo(
+                    id=row.id,
+                    name=row.name,
+                    description=row.description,
+                    content_type=row.content_type,
+                    parent_id=row.parent_id,
+                    filename=row.filename,
                     size_bytes=size,
-                    entry_file=entry_file,
-                    url=info.get("url"),
-                    frameable=info.get("frameable"),
-                    published=info.get("published", False),
-                    host_password_hash=info.get("host_password_hash"),
+                    entry_file=row.entry_file,
+                    url=row.url,
+                    frameable=row.frameable,
+                    published=row.published,
+                    host_password_hash=row.host_password_hash,
                 )
+            logger.info(f"Loaded {len(self._pages)} pages from database")
 
-        logger.info(f"Loaded {len(self._pages)} pages from {path}")
+    async def _persist_page(self, page: PageInfo) -> None:
+        """Write a single page to database."""
+        from core.db.engine import async_session_factory
+        from core.db.models.page import PageORM
 
-    def _save_config(self) -> None:
-        if not self._config_path:
-            return
-        data: dict = {"pages": {}}
-        for pid, p in self._pages.items():
-            page_data: dict = {
-                "name": p.name,
-                "description": p.description,
-                "content_type": p.content_type,
-            }
-            if p.parent_id:
-                page_data["parent_id"] = p.parent_id
-            if p.filename:
-                page_data["filename"] = p.filename
-            if p.entry_file:
-                page_data["entry_file"] = p.entry_file
-            if p.url:
-                page_data["url"] = p.url
-            if p.frameable is not None:
-                page_data["frameable"] = p.frameable
-            if p.published:
-                page_data["published"] = True
-            if p.host_password_hash:
-                page_data["host_password_hash"] = p.host_password_hash
-            data["pages"][pid] = page_data
+        async with async_session_factory() as session:
+            orm = PageORM(
+                id=page.id,
+                name=page.name,
+                description=page.description,
+                content_type=page.content_type,
+                parent_id=page.parent_id,
+                filename=page.filename,
+                size_bytes=page.size_bytes,
+                entry_file=page.entry_file,
+                url=page.url,
+                frameable=page.frameable,
+                published=page.published,
+                host_password_hash=page.host_password_hash,
+            )
+            await session.merge(orm)
+            await session.commit()
 
-        self._config_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+    async def _delete_from_db(self, page_id: str) -> None:
+        """Delete a page from database."""
+        from core.db.engine import async_session_factory
+        from core.db.repositories.page_repo import PageRepository
+
+        async with async_session_factory() as session:
+            repo = PageRepository(session)
+            await repo.delete_by_id(page_id)
+            await session.commit()
 
     # --- Folder operations ---
 
-    def create_folder(self, name: str, description: str = "", parent_id: Optional[str] = None) -> PageInfo:
+    async def create_folder(self, name: str, description: str = "", parent_id: Optional[str] = None) -> PageInfo:
         folder_id = uuid.uuid4().hex[:8]
         folder = PageInfo(
             id=folder_id,
@@ -196,7 +144,7 @@ class PageManager:
             parent_id=parent_id,
         )
         self._pages[folder_id] = folder
-        self._save_config()
+        await self._persist_page(folder)
         logger.info(f"Created folder: {name}")
         return folder
 
@@ -248,7 +196,7 @@ class PageManager:
         p = self._pages_dir / page.filename
         return p if p.exists() else None
 
-    def add_page(self, name: str, description: str, html_bytes: bytes, original_filename: str, parent_id: Optional[str] = None) -> PageInfo:
+    async def add_page(self, name: str, description: str, html_bytes: bytes, original_filename: str, parent_id: Optional[str] = None) -> PageInfo:
         if not self._pages_dir:
             raise NotInitializedError("PageManager not initialized")
 
@@ -269,11 +217,11 @@ class PageManager:
             size_bytes=len(html_bytes),
         )
         self._pages[page_id] = page
-        self._save_config()
+        await self._persist_page(page)
         logger.info(f"Added page: {name} ({safe_filename})")
         return page
 
-    def add_page_from_path(self, name: str, description: str, source_path: str, parent_id: Optional[str] = None) -> PageInfo:
+    async def add_page_from_path(self, name: str, description: str, source_path: str, parent_id: Optional[str] = None) -> PageInfo:
         if not self._pages_dir:
             raise NotInitializedError("PageManager not initialized")
 
@@ -282,9 +230,9 @@ class PageManager:
             raise NotFoundError(f"File not found: {source_path}")
 
         html_bytes = src.read_bytes()
-        return self.add_page(name, description, html_bytes, src.name, parent_id=parent_id)
+        return await self.add_page(name, description, html_bytes, src.name, parent_id=parent_id)
 
-    def add_bookmark(self, name: str, url: str, description: str = "", parent_id: Optional[str] = None) -> PageInfo:
+    async def add_bookmark(self, name: str, url: str, description: str = "", parent_id: Optional[str] = None) -> PageInfo:
         page_id = uuid.uuid4().hex[:8]
         frameable = _check_frameable(url)
         page = PageInfo(
@@ -297,7 +245,7 @@ class PageManager:
             frameable=frameable,
         )
         self._pages[page_id] = page
-        self._save_config()
+        await self._persist_page(page)
         logger.info(f"Added bookmark: {name} ({url}) frameable={frameable}")
         return page
 
@@ -324,7 +272,7 @@ class PageManager:
             return nested_htmls[0]
         return None
 
-    def add_bundle(
+    async def add_bundle(
         self,
         name: str,
         description: str,
@@ -364,7 +312,7 @@ class PageManager:
             size_bytes=size,
         )
         self._pages[page_id] = page
-        self._save_config()
+        await self._persist_page(page)
         logger.info(f"Added bundle: {name} ({page_id}/, entry={entry_file})")
         return page
 
@@ -378,17 +326,17 @@ class PageManager:
             return None
         return target if target.is_file() else None
 
-    def check_and_update_frameable(self, page_id: str) -> Optional[bool]:
+    async def check_and_update_frameable(self, page_id: str) -> Optional[bool]:
         page = self._pages.get(page_id)
         if not page or page.content_type != "url" or not page.url:
             return None
         frameable = _check_frameable(page.url)
         page.frameable = frameable
         self._pages[page_id] = page
-        self._save_config()
+        await self._persist_page(page)
         return frameable
 
-    def update_page(self, page_id: str, name: Optional[str] = None, description: Optional[str] = None, parent_id: Optional[str] = "__unset__") -> Optional[PageInfo]:
+    async def update_page(self, page_id: str, name: Optional[str] = None, description: Optional[str] = None, parent_id: Optional[str] = "__unset__") -> Optional[PageInfo]:
         page = self._pages.get(page_id)
         if not page:
             return None
@@ -401,10 +349,10 @@ class PageManager:
             page.parent_id = parent_id
 
         self._pages[page_id] = page
-        self._save_config()
+        await self._persist_page(page)
         return page
 
-    def delete_page(self, page_id: str) -> bool:
+    async def delete_page(self, page_id: str) -> bool:
         page = self._pages.get(page_id)
         if not page:
             return False
@@ -413,7 +361,7 @@ class PageManager:
         if page.content_type == "folder":
             children = self.get_children(page_id)
             for child in children:
-                self.delete_page(child.id)
+                await self.delete_page(child.id)
 
         # Deactivate if this page is currently active
         if self._active_page_id == page_id:
@@ -430,7 +378,7 @@ class PageManager:
             if html_file.exists():
                 html_file.unlink()
 
-        self._save_config()
+        await self._delete_from_db(page_id)
         logger.info(f"Deleted page: {page.name}")
         return True
 
@@ -467,7 +415,7 @@ class PageManager:
         dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations=100_000)
         return salt.hex() + ":" + dk.hex()
 
-    def publish_page(self, page_id: str, published: bool, password: Optional[str] = None) -> Optional[PageInfo]:
+    async def publish_page(self, page_id: str, published: bool, password: Optional[str] = None) -> Optional[PageInfo]:
         page = self._pages.get(page_id)
         if not page or page.content_type in ("folder", "url"):
             return None
@@ -477,7 +425,7 @@ class PageManager:
         elif not published:
             page.host_password_hash = None
         self._pages[page_id] = page
-        self._save_config()
+        await self._persist_page(page)
         logger.info(f"{'Published' if published else 'Unpublished'} page: {page.name}")
         return page
 
@@ -544,7 +492,7 @@ class PageManager:
             return None
         return target.read_text(encoding="utf-8")
 
-    def write_page_file(self, page_id: str, file_path: str, content: str) -> Optional[str]:
+    async def write_page_file(self, page_id: str, file_path: str, content: str) -> Optional[str]:
         """Write/create a file in a page. Returns the resolved path or None."""
         page = self._pages.get(page_id)
         if not page or not self._pages_dir:
@@ -557,10 +505,9 @@ class PageManager:
                 return None
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-            # Update size
             page.size_bytes = self._compute_size(base)
             self._pages[page_id] = page
-            self._save_config()
+            await self._persist_page(page)
             self.bump_version(page_id)
             return str(target)
         elif page.content_type == "html" and page.filename:
@@ -568,12 +515,12 @@ class PageManager:
             target.write_text(content, encoding="utf-8")
             page.size_bytes = len(content.encode("utf-8"))
             self._pages[page_id] = page
-            self._save_config()
+            await self._persist_page(page)
             self.bump_version(page_id)
             return str(target)
         return None
 
-    def convert_to_bundle(self, page_id: str) -> Optional[PageInfo]:
+    async def convert_to_bundle(self, page_id: str) -> Optional[PageInfo]:
         """Convert a single-file page to a bundle for multi-file editing."""
         page = self._pages.get(page_id)
         if not page or not self._pages_dir or page.content_type != "html" or not page.filename:
@@ -586,7 +533,6 @@ class PageManager:
         bundle_dir = self._pages_dir / page_id
         bundle_dir.mkdir(parents=True, exist_ok=True)
 
-        # Move file into bundle, rename to meaningful name
         original_name = Path(page.filename).stem.split("_")[-1] if "_" in page.filename else page.filename
         ext = Path(page.filename).suffix
         dest_name = f"index{ext}" if ext in (".html", ".htm") else original_name
@@ -599,7 +545,7 @@ class PageManager:
         page.filename = None
         page.size_bytes = self._compute_size(bundle_dir)
         self._pages[page_id] = page
-        self._save_config()
+        await self._persist_page(page)
         logger.info(f"Converted page '{page.name}' to bundle")
         return page
 

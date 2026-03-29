@@ -43,9 +43,9 @@ async def update_config(config: Dict[str, Any]) -> Dict[str, Any]:
         MCPServerConfig(**cfg)
     # Replace configs
     for name in list(mcp_manager._configs.keys()):
-        mcp_manager.remove_server_config(name)
+        await mcp_manager.remove_server_config(name)
     for name, cfg in servers.items():
-        mcp_manager.add_server_config(name, MCPServerConfig(**cfg))
+        await mcp_manager.add_server_config(name, MCPServerConfig(**cfg))
     await mcp_manager.reload_config()
     return mcp_manager.get_raw_config()
 
@@ -80,7 +80,7 @@ async def add_server(req: AddServerRequest):
     """Add a new MCP server and connect."""
     if req.name in mcp_manager._configs:
         raise HTTPException(status_code=409, detail=f"Server '{req.name}' already exists")
-    mcp_manager.add_server_config(req.name, req.config)
+    await mcp_manager.add_server_config(req.name, req.config)
     if req.config.enabled:
         await mcp_manager.connect_server(req.name)
     info = mcp_manager.get_server_status(req.name)
@@ -95,7 +95,7 @@ async def delete_server(name: str):
     if name not in mcp_manager._configs:
         raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
     await mcp_manager.disconnect_server(name)
-    mcp_manager.remove_server_config(name)
+    await mcp_manager.remove_server_config(name)
     return {"message": f"Server '{name}' deleted"}
 
 
@@ -108,7 +108,7 @@ async def update_server(name: str, req: UpdateServerRequest):
     updates = req.model_dump(exclude_none=True)
     old_config = mcp_manager._configs[name].model_dump()
 
-    mcp_manager.update_server_config(name, updates)
+    await mcp_manager.update_server_config(name, updates)
     new_config = mcp_manager._configs[name]
 
     # Determine if reconnection needed

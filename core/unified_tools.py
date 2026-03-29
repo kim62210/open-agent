@@ -397,9 +397,9 @@ def _handle_write_file(ctx: str, args: Dict[str, Any]) -> str:
         if p and p.content_type == "html":
             existing = page_manager.list_page_files(page.id) or []
             if path not in existing:
-                page_manager.convert_to_bundle(page.id)
+                await page_manager.convert_to_bundle(page.id)
 
-        result = page_manager.write_page_file(page.id, path, content)
+        result = await page_manager.write_page_file(page.id, path, content)
         if result is None:
             return f"Error: 파일 '{path}' 쓰기 실패."
         return f"파일 '{path}' 저장 완료."
@@ -492,7 +492,7 @@ def _handle_edit_file(ctx: str, args: Dict[str, Any]) -> str:
             new_content = fuzzy_replace(content, old_string, new_string, match_mode)
             replaced = 1
 
-        result = page_manager.write_page_file(page.id, path, new_content)
+        result = await page_manager.write_page_file(page.id, path, new_content)
         if result is None:
             return "Error: 파일 쓰기 실패."
 

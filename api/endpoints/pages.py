@@ -25,7 +25,7 @@ router = APIRouter()
 
 @router.post("/folders", response_model=PageInfo)
 async def create_folder(req: CreateFolderRequest):
-    return page_manager.create_folder(req.name, req.description, req.parent_id)
+    return await page_manager.create_folder(req.name, req.description, req.parent_id)
 
 
 @router.get("/breadcrumb/{page_id}", response_model=List[PageInfo])
@@ -41,7 +41,7 @@ async def get_breadcrumb(page_id: str):
 
 @router.post("/bookmark", response_model=PageInfo)
 async def create_bookmark(req: CreateBookmarkRequest):
-    return page_manager.add_bookmark(
+    return await page_manager.add_bookmark(
         name=req.name,
         url=req.url,
         description=req.description,
@@ -57,7 +57,7 @@ async def check_frameable(page_id: str):
     page = page_manager.get_page(page_id)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
-    frameable = page_manager.check_and_update_frameable(page_id)
+    frameable = await page_manager.check_and_update_frameable(page_id)
     return {"frameable": frameable}
 
 
@@ -188,7 +188,7 @@ async def upload_bundle(
         if not bundle_files:
             raise HTTPException(status_code=400, detail="유효한 파일이 없습니다.")
 
-        return page_manager.add_bundle(
+        return await page_manager.add_bundle(
             name=name,
             description=description,
             files=bundle_files,
@@ -245,7 +245,7 @@ async def upload_page(
         raise HTTPException(status_code=400, detail="지원하지 않는 파일 형식입니다.")
     try:
         data = await file.read()
-        return page_manager.add_page(name, description, data, file.filename, parent_id=parent_id)
+        return await page_manager.add_page(name, description, data, file.filename, parent_id=parent_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -260,7 +260,7 @@ class ImportPathRequest(BaseModel):
 @router.post("/import", response_model=PageInfo)
 async def import_page_from_path(req: ImportPathRequest):
     try:
-        return page_manager.add_page_from_path(req.name, req.description, req.path, parent_id=req.parent_id)
+        return await page_manager.add_page_from_path(req.name, req.description, req.path, parent_id=req.parent_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -269,7 +269,7 @@ async def import_page_from_path(req: ImportPathRequest):
 async def update_page(page_id: str, req: UpdatePageRequest):
     # Distinguish "not provided" vs "explicitly null" for parent_id
     parent_id = req.parent_id if "parent_id" in req.model_fields_set else "__unset__"
-    page = page_manager.update_page(
+    page = await page_manager.update_page(
         page_id,
         name=req.name,
         description=req.description,
@@ -282,7 +282,7 @@ async def update_page(page_id: str, req: UpdatePageRequest):
 
 @router.delete("/{page_id}")
 async def delete_page(page_id: str):
-    if not page_manager.delete_page(page_id):
+    if not await page_manager.delete_page(page_id):
         raise HTTPException(status_code=404, detail="Page not found")
     return {"status": "deleted"}
 
@@ -307,7 +307,7 @@ class PublishRequest(BaseModel):
 
 @router.post("/{page_id}/publish", response_model=PageInfo)
 async def publish_page(page_id: str, req: PublishRequest = PublishRequest()):
-    page = page_manager.publish_page(page_id, True, password=req.password)
+    page = await page_manager.publish_page(page_id, True, password=req.password)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found or not publishable")
     return page
@@ -315,7 +315,7 @@ async def publish_page(page_id: str, req: PublishRequest = PublishRequest()):
 
 @router.post("/{page_id}/unpublish", response_model=PageInfo)
 async def unpublish_page(page_id: str):
-    page = page_manager.publish_page(page_id, False)
+    page = await page_manager.publish_page(page_id, False)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
     return page
@@ -345,7 +345,7 @@ async def write_page_file(page_id: str, file_path: str, body: dict):
     content = body.get("content")
     if content is None:
         raise HTTPException(status_code=400, detail="content is required")
-    result = page_manager.write_page_file(page_id, file_path, content)
+    result = await page_manager.write_page_file(page_id, file_path, content)
     if result is None:
         raise HTTPException(status_code=400, detail="Failed to write file")
     return {"status": "ok", "path": result}

@@ -143,7 +143,7 @@ async def list_workspaces():
 
 @router.post("/", response_model=WorkspaceInfo)
 async def create_workspace(req: CreateWorkspaceRequest):
-    return workspace_manager.create_workspace(req.name, req.path, req.description)
+    return await workspace_manager.create_workspace(req.name, req.path, req.description)
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceInfo)
@@ -156,7 +156,7 @@ async def get_workspace(workspace_id: str):
 
 @router.patch("/{workspace_id}", response_model=WorkspaceInfo)
 async def update_workspace(workspace_id: str, req: UpdateWorkspaceRequest):
-    ws = workspace_manager.update_workspace(workspace_id, name=req.name, description=req.description)
+    ws = await workspace_manager.update_workspace(workspace_id, name=req.name, description=req.description)
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
     return ws
@@ -164,14 +164,14 @@ async def update_workspace(workspace_id: str, req: UpdateWorkspaceRequest):
 
 @router.delete("/{workspace_id}")
 async def delete_workspace(workspace_id: str):
-    if not workspace_manager.delete_workspace(workspace_id):
+    if not await workspace_manager.delete_workspace(workspace_id):
         raise HTTPException(status_code=404, detail="Workspace not found")
     return {"status": "deleted"}
 
 
 @router.post("/{workspace_id}/activate", response_model=WorkspaceInfo)
 async def activate_workspace(workspace_id: str):
-    ws = workspace_manager.set_active(workspace_id)
+    ws = await workspace_manager.set_active(workspace_id)
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
     return ws
@@ -179,7 +179,7 @@ async def activate_workspace(workspace_id: str):
 
 @router.post("/deactivate")
 async def deactivate_workspace():
-    workspace_manager.deactivate()
+    await workspace_manager.deactivate()
     return {"status": "deactivated"}
 
 

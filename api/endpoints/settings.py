@@ -129,7 +129,7 @@ async def get_llm_settings():
 
 @router.patch("/llm", response_model=LLMSettings)
 async def update_llm_settings(req: UpdateLLMRequest):
-    updated = settings_manager.update_llm(**req.model_dump(exclude_unset=True))
+    updated = await settings_manager.update_llm(**req.model_dump(exclude_unset=True))
     # api_key를 응답에서 마스킹
     result = updated.model_copy()
     if result.api_key:
@@ -144,7 +144,7 @@ async def get_memory_settings():
 
 @router.patch("/memory", response_model=MemorySettings)
 async def update_memory_settings(req: UpdateMemorySettingsRequest):
-    return settings_manager.update_memory(**req.model_dump(exclude_unset=True))
+    return await settings_manager.update_memory(**req.model_dump(exclude_unset=True))
 
 
 @router.get("/profile", response_model=ProfileSettings)
@@ -154,7 +154,7 @@ async def get_profile():
 
 @router.patch("/profile", response_model=ProfileSettings)
 async def update_profile(req: UpdateProfileRequest):
-    return settings_manager.update_profile(**req.model_dump(exclude_unset=True))
+    return await settings_manager.update_profile(**req.model_dump(exclude_unset=True))
 
 
 @router.get("/theme", response_model=ThemeSettings)
@@ -164,7 +164,7 @@ async def get_theme():
 
 @router.patch("/theme", response_model=ThemeSettings)
 async def update_theme(req: UpdateThemeRequest):
-    return settings_manager.update_theme(**req.model_dump(exclude_unset=True))
+    return await settings_manager.update_theme(**req.model_dump(exclude_unset=True))
 
 
 # --- Validate Model ---
@@ -217,12 +217,12 @@ class AddCustomModelRequest(PydanticBaseModel):
 
 @router.post("/custom-models", response_model=list[CustomModel])
 async def add_custom_model(req: AddCustomModelRequest):
-    return settings_manager.add_custom_model(req.label, req.model, req.provider)
+    return await settings_manager.add_custom_model(req.label, req.model, req.provider)
 
 
 @router.delete("/custom-models", response_model=list[CustomModel])
 async def remove_custom_model(model: str):
-    return settings_manager.remove_custom_model(model)
+    return await settings_manager.remove_custom_model(model)
 
 
 # --- Dynamic Model Discovery ---

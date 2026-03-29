@@ -1,10 +1,8 @@
 import asyncio
-import json
 import logging
 import re
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from open_agent.models.job import JobInfo, JobRunRecord
@@ -48,36 +46,79 @@ def _extract_mcp_servers_from_tools(tool_names: List[str]) -> List[str]:
 class JobManager:
     def __init__(self):
         self._jobs: Dict[str, JobInfo] = {}
-        self._config_path: Optional[Path] = None
 
-    def load_config(self, config_path: str) -> None:
-        path = Path(config_path)
-        if not path.is_absolute():
-            from open_agent.config import get_config_path
-            path = get_config_path(config_path)
-        self._config_path = path
+    async def load_from_db(self) -> None:
+        """Load all jobs from database into in-memory cache."""
+        from core.db.engine import async_session_factory
+        from core.db.repositories.job_repo import JobRepository
 
-        if not path.exists():
-            path.write_text(json.dumps({"jobs": {}}, indent=2), encoding="utf-8")
-            self._jobs = {}
-            return
+        async with async_session_factory() as session:
+            repo = JobRepository(session)
+            rows = await repo.get_all()
+            self._jobs.clear()
+            for row in rows:
+                # Load run records
+                records = await repo.get_run_records(row.id, limit=MAX_HISTORY)
+                run_history = [
+                    JobRunRecord(
+                        run_id=r.run_id,
+                        started_at=r.started_at,
+                        finished_at=r.finished_at,
+                        status=r.status,
+                        duration_seconds=r.duration_seconds,
+                        summary=r.summary,
+                    )
+                    for r in records
+                ]
+                self._jobs[row.id] = JobInfo(
+                    id=row.id,
+                    name=row.name,
+                    description=row.description,
+                    prompt=row.prompt,
+                    skill_names=row.skill_names or [],
+                    mcp_server_names=row.mcp_server_names or [],
+                    schedule_type=row.schedule_type,
+                    schedule_config=row.schedule_config or {},
+                    enabled=row.enabled,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                    next_run_at=row.next_run_at,
+                    last_run_at=row.last_run_at,
+                    last_run_status=row.last_run_status,
+                    last_run_summary=row.last_run_summary,
+                    run_count=row.run_count,
+                    consecutive_failures=row.consecutive_failures,
+                    run_history=run_history,
+                )
+            logger.info(f"Loaded {len(self._jobs)} jobs from database")
 
-        data = json.loads(path.read_text(encoding="utf-8"))
-        for jid, info in data.get("jobs", {}).items():
-            self._jobs[jid] = JobInfo(id=jid, **info)
+    async def _persist_job(self, job: JobInfo) -> None:
+        """Write a single job to database."""
+        from core.db.engine import async_session_factory
+        from core.db.models.job import JobORM
 
-        logger.info(f"Loaded {len(self._jobs)} jobs from {path}")
-
-    def _save_config(self) -> None:
-        if not self._config_path:
-            return
-        data: dict = {"jobs": {}}
-        for jid, job in self._jobs.items():
-            data["jobs"][jid] = job.model_dump(exclude={"id"})
-        self._config_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        async with async_session_factory() as session:
+            orm = JobORM(
+                id=job.id,
+                name=job.name,
+                description=job.description,
+                prompt=job.prompt,
+                skill_names=job.skill_names,
+                mcp_server_names=job.mcp_server_names,
+                schedule_type=job.schedule_type if isinstance(job.schedule_type, str) else job.schedule_type.value,
+                schedule_config=job.schedule_config,
+                enabled=job.enabled,
+                created_at=job.created_at,
+                updated_at=job.updated_at,
+                next_run_at=job.next_run_at,
+                last_run_at=job.last_run_at,
+                last_run_status=job.last_run_status if isinstance(job.last_run_status, (str, type(None))) else (job.last_run_status.value if job.last_run_status else None),
+                last_run_summary=job.last_run_summary,
+                run_count=job.run_count,
+                consecutive_failures=job.consecutive_failures,
+            )
+            await session.merge(orm)
+            await session.commit()
 
     def get_all_jobs(self) -> List[JobInfo]:
         return list(self._jobs.values())
@@ -85,17 +126,23 @@ class JobManager:
     def get_job(self, job_id: str) -> Optional[JobInfo]:
         return self._jobs.get(job_id)
 
-    def create_job(self, req: "CreateJobRequest") -> JobInfo:
+    async def create_job(self, req: "CreateJobRequest") -> JobInfo:
         from open_agent.models.job import CreateJobRequest  # noqa: F811
 
         error = validate_job_prompt(req.prompt)
         if error:
             raise ValueError(error)
 
-        # 같은 이름의 기존 잡이 있으면 자동 삭제 (LLM이 delete를 빠뜨려도 중복 방지)
+        # Auto-delete jobs with same name
         existing = [jid for jid, j in self._jobs.items() if j.name == req.name]
         for jid in existing:
             self._jobs.pop(jid, None)
+            from core.db.engine import async_session_factory
+            from core.db.repositories.job_repo import JobRepository
+            async with async_session_factory() as session:
+                repo = JobRepository(session)
+                await repo.delete_by_id(jid)
+                await session.commit()
             logger.info(f"Auto-replaced existing job with same name: {req.name} ({jid})")
 
         job_id = uuid.uuid4().hex[:8]
@@ -113,11 +160,11 @@ class JobManager:
             updated_at=now,
         )
         self._jobs[job_id] = job
-        self._save_config()
+        await self._persist_job(job)
         logger.info(f"Created job: {req.name} ({job_id})")
         return job
 
-    def update_job(self, job_id: str, req: "UpdateJobRequest") -> Optional[JobInfo]:
+    async def update_job(self, job_id: str, req: "UpdateJobRequest") -> Optional[JobInfo]:
         job = self._jobs.get(job_id)
         if not job:
             return None
@@ -128,33 +175,41 @@ class JobManager:
         job.updated_at = datetime.now(timezone.utc).isoformat()
 
         self._jobs[job_id] = job
-        self._save_config()
+        await self._persist_job(job)
         logger.info(f"Updated job: {job.name} ({job_id})")
         return job
 
-    def delete_job(self, job_id: str) -> bool:
+    async def delete_job(self, job_id: str) -> bool:
         job = self._jobs.pop(job_id, None)
         if not job:
             return False
-        self._save_config()
+
+        from core.db.engine import async_session_factory
+        from core.db.repositories.job_repo import JobRepository
+
+        async with async_session_factory() as session:
+            repo = JobRepository(session)
+            await repo.delete_by_id(job_id)
+            await session.commit()
+
         logger.info(f"Deleted job: {job.name} ({job_id})")
         return True
 
-    def toggle_job(self, job_id: str) -> Optional[JobInfo]:
+    async def toggle_job(self, job_id: str) -> Optional[JobInfo]:
         job = self._jobs.get(job_id)
         if not job:
             return None
         job.enabled = not job.enabled
         job.updated_at = datetime.now(timezone.utc).isoformat()
         self._jobs[job_id] = job
-        self._save_config()
+        await self._persist_job(job)
         logger.info(f"Toggled job: {job.name} → enabled={job.enabled}")
         return job
 
-    # --- 실행 상태 & 이력 ---
+    # --- Run state & history ---
 
-    def start_run(self, job_id: str) -> Optional[str]:
-        """실행 시작을 기록하고 run_id를 반환합니다."""
+    async def start_run(self, job_id: str) -> Optional[str]:
+        """Record run start and return run_id."""
         job = self._jobs.get(job_id)
         if not job:
             return None
@@ -164,22 +219,34 @@ class JobManager:
         job.last_run_at = now
         job.last_run_summary = None
         job.updated_at = now
-        # 이력에 running 레코드 추가
         job.run_history.insert(0, JobRunRecord(
             run_id=run_id, started_at=now, status="running",
         ))
         self._jobs[job_id] = job
-        self._save_config()
+
+        # Persist job + run record
+        from core.db.engine import async_session_factory
+        from core.db.models.job import JobRunRecordORM
+        from core.db.repositories.job_repo import JobRepository
+
+        async with async_session_factory() as session:
+            repo = JobRepository(session)
+            await repo.add_run_record(JobRunRecordORM(
+                run_id=run_id, job_id=job_id, started_at=now, status="running",
+            ))
+            await session.commit()
+
+        await self._persist_job(job)
         return run_id
 
-    def finish_run(
+    async def finish_run(
         self,
         job_id: str,
         run_id: str,
         status: str,
         summary: Optional[str] = None,
     ) -> Optional[JobInfo]:
-        """실행 완료를 기록합니다."""
+        """Record run completion."""
         job = self._jobs.get(job_id)
         if not job:
             return None
@@ -190,7 +257,6 @@ class JobManager:
         job.run_count += 1
         job.updated_at = now
 
-        # 서킷 브레이커: 연속 실패 추적
         if status == "success":
             job.consecutive_failures = 0
         elif status in ("failed", "timeout"):
@@ -201,9 +267,8 @@ class JobManager:
                     f"Job auto-disabled after {job.consecutive_failures} consecutive failures: "
                     f"{job.name} ({job_id})"
                 )
-        # "cancelled"는 사용자 의도적 취소이므로 변경 없음
 
-        # 이력 레코드 업데이트
+        # Update run record in memory
         for rec in job.run_history:
             if rec.run_id == run_id:
                 rec.status = status
@@ -214,12 +279,27 @@ class JobManager:
                 rec.duration_seconds = round((finished - started).total_seconds(), 1)
                 break
 
-        # 이력 수 제한
         if len(job.run_history) > MAX_HISTORY:
             job.run_history = job.run_history[:MAX_HISTORY]
 
         self._jobs[job_id] = job
-        self._save_config()
+
+        # Update run record in DB
+        from core.db.engine import async_session_factory
+        from core.db.models.job import JobRunRecordORM
+
+        async with async_session_factory() as session:
+            orm_rec = await session.get(JobRunRecordORM, run_id)
+            if orm_rec:
+                orm_rec.status = status
+                orm_rec.finished_at = now
+                orm_rec.summary = summary[:2000] if summary else None
+                started = datetime.fromisoformat(orm_rec.started_at)
+                finished = datetime.fromisoformat(now)
+                orm_rec.duration_seconds = round((finished - started).total_seconds(), 1)
+            await session.commit()
+
+        await self._persist_job(job)
         return job
 
     def get_run_history(self, job_id: str, limit: int = 20) -> List[JobRunRecord]:
@@ -228,13 +308,13 @@ class JobManager:
             return []
         return job.run_history[:limit]
 
-    def set_next_run_at(self, job_id: str, next_run: Optional[str]) -> None:
+    async def set_next_run_at(self, job_id: str, next_run: Optional[str]) -> None:
         job = self._jobs.get(job_id)
         if not job:
             return
         job.next_run_at = next_run
         self._jobs[job_id] = job
-        self._save_config()
+        await self._persist_job(job)
 
     # --- LLM 도구 통합 ---
 
@@ -421,11 +501,11 @@ class JobManager:
                 schedule_config=args.get("schedule_config", {}),
             )
             # 2) 비활성 상태로 생성 (테스트 후 활성화)
-            job = self.create_job(req)
+            job = await self.create_job(req)
             job.enabled = False
             job.updated_at = datetime.now(timezone.utc).isoformat()
             self._jobs[job.id] = job
-            self._save_config()
+            await self._persist_job(job)
 
             schedule_desc = self._format_schedule_text(job)
 
@@ -438,7 +518,7 @@ class JobManager:
                 job.enabled = True
                 job.updated_at = datetime.now(timezone.utc).isoformat()
                 self._jobs[job.id] = job
-                self._save_config()
+                await self._persist_job(job)
 
                 try:
                     from open_agent.core.job_scheduler import job_scheduler
@@ -463,7 +543,7 @@ class JobManager:
             job.enabled = True
             job.updated_at = datetime.now(timezone.utc).isoformat()
             self._jobs[job.id] = job
-            self._save_config()
+            await self._persist_job(job)
 
             try:
                 from open_agent.core.job_scheduler import job_scheduler
@@ -489,23 +569,23 @@ class JobManager:
             from open_agent.core.job_executor import execute_job
             from open_agent.core.job_manager import job_manager as mgr
 
-            run_id = mgr.start_run(job_id)
+            run_id = await mgr.start_run(job_id)
             if not run_id:
                 return {"success": False, "error": "Failed to start test run", "summary": ""}
 
             try:
                 summary = await execute_job(job_id)
-                mgr.finish_run(job_id, run_id, "success", summary)
+                await mgr.finish_run(job_id, run_id, "success", summary)
                 return {"success": True, "summary": summary, "error": ""}
             except asyncio.TimeoutError:
-                mgr.finish_run(job_id, run_id, "timeout", "테스트 실행 타임아웃")
+                await mgr.finish_run(job_id, run_id, "timeout", "테스트 실행 타임아웃")
                 return {"success": False, "error": "실행 시간이 초과되었습니다 (300초)", "summary": ""}
             except asyncio.CancelledError:
-                mgr.finish_run(job_id, run_id, "cancelled", "테스트 실행 취소됨")
+                await mgr.finish_run(job_id, run_id, "cancelled", "테스트 실행 취소됨")
                 return {"success": False, "error": "실행이 취소되었습니다", "summary": ""}
             except Exception as e:
                 error_msg = str(e)[:300]
-                mgr.finish_run(job_id, run_id, "failed", f"테스트 실패: {error_msg}")
+                await mgr.finish_run(job_id, run_id, "failed", f"테스트 실패: {error_msg}")
                 return {"success": False, "error": error_msg, "summary": ""}
         except Exception as e:
             return {"success": False, "error": str(e)[:300], "summary": ""}
@@ -555,7 +635,7 @@ class JobManager:
         except Exception:
             pass
 
-        self.delete_job(job_id)
+        await self.delete_job(job_id)
         return f"Scheduled Task '{job_name}' (ID: {job_id})이 삭제되었습니다."
 
     @staticmethod

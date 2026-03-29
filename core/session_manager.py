@@ -2,10 +2,8 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, List, Optional
 
-from open_agent.core.exceptions import NotInitializedError
 from open_agent.models.session import SessionInfo, SessionMessage
 
 logger = logging.getLogger(__name__)
@@ -14,65 +12,29 @@ logger = logging.getLogger(__name__)
 class SessionManager:
     def __init__(self):
         self._sessions: Dict[str, SessionInfo] = {}
-        self._sessions_dir: Optional[Path] = None
-        self._config_path: Optional[Path] = None
 
-    def load_config(self, config_path: str, sessions_dir: str) -> None:
-        sessions_path = Path(sessions_dir)
-        if not sessions_path.is_absolute():
-            from open_agent.config import get_sessions_dir
-            sessions_path = get_sessions_dir()
-        self._sessions_dir = sessions_path
-        self._sessions_dir.mkdir(parents=True, exist_ok=True)
+    async def load_from_db(self) -> None:
+        """Load all sessions from database into in-memory cache."""
+        from core.db.engine import async_session_factory
+        from core.db.repositories.session_repo import SessionRepository
 
-        path = Path(config_path)
-        if not path.is_absolute():
-            from open_agent.config import get_config_path
-            path = get_config_path(config_path)
-        self._config_path = path
-
-        if not path.exists():
-            path.write_text(json.dumps({"sessions": {}}, indent=2), encoding="utf-8")
-            self._sessions = {}
-            return
-
-        data = json.loads(path.read_text(encoding="utf-8"))
-        for sid, info in data.get("sessions", {}).items():
-            self._sessions[sid] = SessionInfo(
-                id=sid,
-                title=info.get("title", ""),
-                created_at=info.get("created_at", ""),
-                updated_at=info.get("updated_at", ""),
-                message_count=info.get("message_count", 0),
-                preview=info.get("preview", ""),
-            )
-
-        logger.info(f"Loaded {len(self._sessions)} sessions from {path}")
-
-    def _save_config(self) -> None:
-        if not self._config_path:
-            return
-        data: dict = {"sessions": {}}
-        for sid, s in self._sessions.items():
-            data["sessions"][sid] = {
-                "title": s.title,
-                "created_at": s.created_at,
-                "updated_at": s.updated_at,
-                "message_count": s.message_count,
-                "preview": s.preview,
-            }
-        self._config_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-
-    def _messages_path(self, session_id: str) -> Path:
-        if not self._sessions_dir:
-            raise NotInitializedError("SessionManager not initialized")
-        return self._sessions_dir / f"{session_id}.json"
+        async with async_session_factory() as session:
+            repo = SessionRepository(session)
+            rows = await repo.get_all_ordered()
+            self._sessions.clear()
+            for row in rows:
+                self._sessions[row.id] = SessionInfo(
+                    id=row.id,
+                    title=row.title,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                    message_count=row.message_count,
+                    preview=row.preview,
+                )
+            logger.info(f"Loaded {len(self._sessions)} sessions from database")
 
     def get_all(self) -> List[SessionInfo]:
-        """전체 세션 목록 (updated_at 내림차순)"""
+        """All sessions ordered by updated_at descending."""
         sessions = list(self._sessions.values())
         sessions.sort(key=lambda s: s.updated_at, reverse=True)
         return sessions
@@ -80,10 +42,14 @@ class SessionManager:
     def get_session(self, session_id: str) -> Optional[SessionInfo]:
         return self._sessions.get(session_id)
 
-    def create_session(self, title: str = "") -> SessionInfo:
+    async def create_session(self, title: str = "") -> SessionInfo:
+        from core.db.engine import async_session_factory
+        from core.db.models.session import SessionORM
+        from core.db.repositories.session_repo import SessionRepository
+
         session_id = uuid.uuid4().hex[:12]
         now = datetime.now(timezone.utc).isoformat()
-        session = SessionInfo(
+        info = SessionInfo(
             id=session_id,
             title=title or "New Session",
             created_at=now,
@@ -91,45 +57,107 @@ class SessionManager:
             message_count=0,
             preview="",
         )
-        self._sessions[session_id] = session
 
-        # 빈 메시지 파일 생성
-        self._messages_path(session_id).write_text(
-            json.dumps([], indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        async with async_session_factory() as db:
+            repo = SessionRepository(db)
+            orm = SessionORM(
+                id=session_id,
+                title=info.title,
+                created_at=now,
+                updated_at=now,
+                message_count=0,
+                preview="",
+            )
+            await repo.create(orm)
+            await db.commit()
 
-        self._save_config()
-        logger.info(f"Created session: {session.title} ({session_id})")
-        return session
+        self._sessions[session_id] = info
+        logger.info(f"Created session: {info.title} ({session_id})")
+        return info
 
-    def get_messages(self, session_id: str) -> Optional[List[SessionMessage]]:
+    async def get_messages(self, session_id: str) -> Optional[List[SessionMessage]]:
         if session_id not in self._sessions:
             return None
-        path = self._messages_path(session_id)
-        if not path.exists():
-            return []
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return [SessionMessage(**m) for m in data]
 
-    def save_messages(self, session_id: str, messages: List[SessionMessage]) -> Optional[SessionInfo]:
+        from core.db.engine import async_session_factory
+        from core.db.repositories.session_repo import SessionRepository
+
+        async with async_session_factory() as db:
+            repo = SessionRepository(db)
+            orm = await repo.get_with_messages(session_id)
+            if not orm:
+                return []
+            messages = []
+            for msg_orm in orm.messages:
+                extra = msg_orm.extra or {}
+                content = msg_orm.content
+                # Restore structured content from extra
+                if "structured_content" in extra:
+                    content = extra.pop("structured_content")
+                else:
+                    # Try JSON parse for backward compat
+                    try:
+                        parsed = json.loads(content)
+                        if isinstance(parsed, list):
+                            content = parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                msg = SessionMessage(
+                    role=msg_orm.role,
+                    content=content,
+                    name=msg_orm.name,
+                    tool_call_id=msg_orm.tool_call_id,
+                    timestamp=msg_orm.timestamp,
+                    thinking_steps=extra.get("thinking_steps"),
+                    display_text=extra.get("display_text"),
+                    attached_files=extra.get("attached_files"),
+                )
+                messages.append(msg)
+            return messages
+
+    async def save_messages(self, session_id: str, messages: List[SessionMessage]) -> Optional[SessionInfo]:
         session = self._sessions.get(session_id)
         if not session:
             return None
 
-        # 메시지 파일 저장
-        msg_dicts = [m.model_dump(exclude_none=True) for m in messages]
-        self._messages_path(session_id).write_text(
-            json.dumps(msg_dicts, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        from core.db.engine import async_session_factory
+        from core.db.models.session import SessionMessageORM
+        from core.db.repositories.session_repo import SessionRepository
 
-        # 인덱스 업데이트
+        # Build ORM message list
+        orm_messages = []
+        for m in messages:
+            extra: dict = {}
+            if m.thinking_steps:
+                extra["thinking_steps"] = m.thinking_steps
+            if m.display_text:
+                extra["display_text"] = m.display_text
+            if m.attached_files:
+                extra["attached_files"] = m.attached_files
+
+            # Handle structured content (list of dicts)
+            if isinstance(m.content, list):
+                content_str = ""
+                extra["structured_content"] = m.content
+            else:
+                content_str = m.content
+
+            orm_messages.append(SessionMessageORM(
+                role=m.role if isinstance(m.role, str) else m.role.value,
+                content=content_str,
+                name=m.name,
+                tool_call_id=m.tool_call_id,
+                timestamp=m.timestamp,
+                extra=extra or None,
+            ))
+
+        # Update session metadata
         now = datetime.now(timezone.utc).isoformat()
         session.updated_at = now
         session.message_count = len(messages)
 
-        # preview: 마지막 assistant 메시지의 텍스트 100자
+        # preview: last assistant message text (up to 100 chars)
         if messages:
             last = messages[-1]
             text = last.content if isinstance(last.content, str) else ""
@@ -142,8 +170,7 @@ class SessionManager:
         else:
             session.preview = ""
 
-        # title 자동 생성: 아직 기본 타이틀이면 첫 user 메시지에서 추출
-        # display_text 우선 사용 (파일 첨부 시 파일 내용 제외된 텍스트)
+        # Auto-generate title from first user message
         if session.title == "New Session":
             for m in messages:
                 if m.role == "user":
@@ -162,31 +189,61 @@ class SessionManager:
                         session.title = f"[첨부] {', '.join(names)}"[:50]
                     break
 
+        # Persist to database
+        async with async_session_factory() as db:
+            repo = SessionRepository(db)
+            await repo.save_messages(session_id, orm_messages)
+            await repo.update_preview(
+                session_id,
+                preview=session.preview,
+                message_count=session.message_count,
+                updated_at=now,
+            )
+            # Also update title if changed
+            orm = await repo.get_by_id(session_id)
+            if orm:
+                orm.title = session.title
+            await db.commit()
+
         self._sessions[session_id] = session
-        self._save_config()
         return session
 
-    def update_session(self, session_id: str, title: str) -> Optional[SessionInfo]:
+    async def update_session(self, session_id: str, title: str) -> Optional[SessionInfo]:
         session = self._sessions.get(session_id)
         if not session:
             return None
+
+        from core.db.engine import async_session_factory
+        from core.db.repositories.session_repo import SessionRepository
+
+        now = datetime.now(timezone.utc).isoformat()
         session.title = title
-        session.updated_at = datetime.now(timezone.utc).isoformat()
+        session.updated_at = now
+
+        async with async_session_factory() as db:
+            repo = SessionRepository(db)
+            orm = await repo.get_by_id(session_id)
+            if orm:
+                orm.title = title
+                orm.updated_at = now
+            await db.commit()
+
         self._sessions[session_id] = session
-        self._save_config()
         return session
 
-    def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str) -> bool:
         if session_id not in self._sessions:
             return False
+
+        from core.db.engine import async_session_factory
+        from core.db.repositories.session_repo import SessionRepository
+
+        async with async_session_factory() as db:
+            repo = SessionRepository(db)
+            await repo.delete_by_id(session_id)
+            await db.commit()
+
         self._sessions.pop(session_id)
-
-        # 메시지 파일 삭제
-        path = self._messages_path(session_id)
-        if path.exists():
-            path.unlink()
-
-        self._save_config()
         logger.info(f"Deleted session: {session_id}")
         return True
 

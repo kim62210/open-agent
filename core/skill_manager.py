@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import shutil
@@ -51,7 +50,6 @@ _WORKFLOW_EXCLUDE: set[str] = set()  # skill-creator도 라우팅 대상에 포�
 class SkillManager:
     def __init__(self):
         self._skills: Dict[str, SkillInfo] = {}
-        self._config_path: Optional[Path] = None
         self._disabled: set[str] = set()
         self._base_dirs: List[Path] = []
         self._bundled_dir: Optional[Path] = None
@@ -62,31 +60,42 @@ class SkillManager:
 
     # --- Config persistence ---
 
-    def load_config(self, config_path: str) -> None:
-        path = Path(config_path)
-        if not path.is_absolute():
-            from open_agent.config import get_config_path
-            path = get_config_path(config_path)
-        self._config_path = path
+    async def load_disabled_from_db(self) -> None:
+        """Load disabled skill names from database."""
+        from core.db.engine import async_session_factory
+        from core.db.repositories.skill_config_repo import SkillConfigRepository
 
-        if not path.exists():
-            logger.info(f"Skills config not found: {path}, starting fresh")
-            self._disabled = set()
-            return
+        async with async_session_factory() as session:
+            repo = SkillConfigRepository(session)
+            disabled_names = await repo.get_disabled_names()
+            self._disabled = set(disabled_names)
+            logger.info(f"Loaded skill config from database ({len(self._disabled)} disabled)")
 
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            self._disabled = set(data.get("disabled", []))
-            logger.info(f"Loaded skills config from {path} ({len(self._disabled)} disabled)")
-        except Exception as e:
-            logger.warning(f"Failed to load skills config: {e}")
-            self._disabled = set()
+    async def _save_disabled(self) -> None:
+        """Persist disabled state for all skills to database."""
+        from core.db.engine import async_session_factory
+        from core.db.models.skill_config import SkillConfigORM
 
-    def _save_config(self) -> None:
-        if not self._config_path:
-            return
-        data = {"disabled": sorted(self._disabled)}
-        self._config_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        async with async_session_factory() as session:
+            for name, skill in self._skills.items():
+                orm = SkillConfigORM(
+                    name=name,
+                    description=skill.description,
+                    path=skill.path,
+                    scripts=skill.scripts,
+                    references=skill.references,
+                    enabled=skill.enabled,
+                    license=skill.license,
+                    compatibility=skill.compatibility,
+                    metadata_=skill.metadata,
+                    allowed_tools=skill.allowed_tools,
+                    is_bundled=skill.is_bundled,
+                    version=skill.version,
+                    created_at=skill.created_at,
+                    updated_at=skill.updated_at,
+                )
+                await session.merge(orm)
+            await session.commit()
 
     # --- Discovery ---
 
@@ -413,7 +422,7 @@ class SkillManager:
     def _rediscover(self) -> None:
         self.discover_skills([str(d) for d in self._base_dirs])
 
-    def delete_skill(self, name: str) -> bool:
+    async def delete_skill(self, name: str) -> bool:
         skill = self._skills.get(name)
         if not skill:
             return False
@@ -424,10 +433,18 @@ class SkillManager:
         shutil.rmtree(skill.path, ignore_errors=True)
         self._skills.pop(name, None)
         self._disabled.discard(name)
-        self._save_config()
+
+        from core.db.engine import async_session_factory
+        from core.db.repositories.skill_config_repo import SkillConfigRepository
+
+        async with async_session_factory() as session:
+            repo = SkillConfigRepository(session)
+            await repo.delete_by_id(name)
+            await session.commit()
+
         return True
 
-    def toggle_skill(self, name: str, enabled: bool) -> Optional[SkillInfo]:
+    async def toggle_skill(self, name: str, enabled: bool) -> Optional[SkillInfo]:
         skill = self._skills.get(name)
         if not skill:
             return None
@@ -437,10 +454,10 @@ class SkillManager:
             self._disabled.discard(name)
         else:
             self._disabled.add(name)
-        self._save_config()
+        await self._save_disabled()
         return skill
 
-    def update_skill(self, name: str, description: str | None = None, instructions: str | None = None, enabled: bool | None = None) -> Optional[SkillInfo]:
+    async def update_skill(self, name: str, description: str | None = None, instructions: str | None = None, enabled: bool | None = None) -> Optional[SkillInfo]:
         skill = self._skills.get(name)
         if not skill:
             return None
@@ -449,7 +466,7 @@ class SkillManager:
             raise PermissionDeniedError(f"번들 스킬 '{name}'의 설명/지시사항은 수정할 수 없습니다.")
 
         if enabled is not None:
-            self.toggle_skill(name, enabled)
+            await self.toggle_skill(name, enabled)
 
         if description is not None or instructions is not None:
             skill_md_path = Path(skill.path) / "SKILL.md"

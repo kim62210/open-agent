@@ -293,13 +293,13 @@ async def handle_page_tool_call(tool_name: str, args: Dict[str, Any]) -> str:
     # --- Management tools (no active page required) ---
 
     if tool_name == "page_create_page":
-        return _handle_create_page(args)
+        return await _handle_create_page(args)
 
     if tool_name == "page_create_folder":
-        return _handle_create_folder(args)
+        return await _handle_create_folder(args)
 
     if tool_name == "page_move":
-        return _handle_move(args)
+        return await _handle_move(args)
 
     # --- File tools (require active page) ---
 
@@ -337,15 +337,15 @@ async def handle_page_tool_call(tool_name: str, args: Dict[str, Any]) -> str:
         if page and page.content_type == "html":
             existing_files = page_manager.list_page_files(page_id) or []
             if file_path not in existing_files:
-                page_manager.convert_to_bundle(page_id)
+                await page_manager.convert_to_bundle(page_id)
 
-        result = page_manager.write_page_file(page_id, file_path, args["content"])
+        result = await page_manager.write_page_file(page_id, file_path, args["content"])
         if result is None:
             return f"Error: 파일 '{file_path}' 쓰기 실패."
         return f"파일 '{file_path}' 저장 완료."
 
     elif tool_name == "page_edit_file":
-        return _handle_page_edit_file(page_id, args)
+        return await _handle_page_edit_file(page_id, args)
 
     elif tool_name == "page_grep":
         return _handle_page_grep(page_id, args)
@@ -353,7 +353,7 @@ async def handle_page_tool_call(tool_name: str, args: Dict[str, Any]) -> str:
     return f"Error: Unknown page tool '{tool_name}'"
 
 
-def _handle_create_page(args: Dict[str, Any]) -> str:
+async def _handle_create_page(args: Dict[str, Any]) -> str:
     try:
         name = args["name"]
         description = args.get("description", "")
@@ -361,7 +361,7 @@ def _handle_create_page(args: Dict[str, Any]) -> str:
         parent_id = args.get("parent_id")
 
         files = [("index.html", content.encode("utf-8"))]
-        page = page_manager.add_bundle(name, description, files, parent_id=parent_id)
+        page = await page_manager.add_bundle(name, description, files, parent_id=parent_id)
 
         # Auto-activate the new page
         page_manager.activate_page(page.id)
@@ -371,18 +371,18 @@ def _handle_create_page(args: Dict[str, Any]) -> str:
         return f"Error: 페이지 생성 실패 — {e}"
 
 
-def _handle_create_folder(args: Dict[str, Any]) -> str:
+async def _handle_create_folder(args: Dict[str, Any]) -> str:
     try:
         name = args["name"]
         description = args.get("description", "")
         parent_id = args.get("parent_id")
-        folder = page_manager.create_folder(name, description, parent_id)
+        folder = await page_manager.create_folder(name, description, parent_id)
         return f"폴더 '{name}' 생성 완료 (ID: {folder.id})."
     except Exception as e:
         return f"Error: 폴더 생성 실패 — {e}"
 
 
-def _handle_move(args: Dict[str, Any]) -> str:
+async def _handle_move(args: Dict[str, Any]) -> str:
     page_id = args["page_id"]
     target_folder_id = args.get("target_folder_id")
 
@@ -408,7 +408,7 @@ def _handle_move(args: Dict[str, Any]) -> str:
                 parent = page_manager.get_page(current)
                 current = parent.parent_id if parent else None
 
-    result = page_manager.update_page(page_id, parent_id=target_folder_id)
+    result = await page_manager.update_page(page_id, parent_id=target_folder_id)
     if not result:
         return "Error: 이동 실패."
 
@@ -416,7 +416,7 @@ def _handle_move(args: Dict[str, Any]) -> str:
     return f"'{page.name}'을(를) '{dest_name}'(으)로 이동 완료."
 
 
-def _handle_page_edit_file(page_id: str, args: Dict[str, Any]) -> str:
+async def _handle_page_edit_file(page_id: str, args: Dict[str, Any]) -> str:
     """Fuzzy find-replace on page file using Rust engine."""
     from open_agent.core.fuzzy import find_closest_match, fuzzy_find, fuzzy_replace
 
@@ -463,7 +463,7 @@ def _handle_page_edit_file(page_id: str, args: Dict[str, Any]) -> str:
         new_content = fuzzy_replace(content, old_string, new_string, match_mode)
         replaced = 1
 
-    result = page_manager.write_page_file(page_id, file_path, new_content)
+    result = await page_manager.write_page_file(page_id, file_path, new_content)
     if result is None:
         return "Error: 파일 쓰기 실패."
 

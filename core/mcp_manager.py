@@ -1,9 +1,7 @@
 import asyncio
-import json
 import logging
 import shutil
 import time
-from pathlib import Path
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -43,42 +41,49 @@ class MCPClientManager:
         self._statuses: Dict[str, MCPServerStatus] = {}
         self._errors: Dict[str, Optional[str]] = {}
         self._connected_at: Dict[str, Optional[datetime]] = {}
-        self._config_path: Optional[Path] = None
         # Phase 1: Tool schema cache (server_name -> (timestamp, tools))
         self._tool_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
 
-    def load_config(self, config_path: str) -> None:
-        """Load mcp.json configuration."""
-        path = Path(config_path)
-        if not path.is_absolute():
-            from open_agent.config import get_config_path
-            path = get_config_path(config_path)
-        self._config_path = path
+    async def load_from_db(self) -> None:
+        """Load MCP server configs from database."""
+        from core.db.engine import async_session_factory
+        from core.db.repositories.mcp_config_repo import MCPConfigRepository
 
-        if not path.exists():
-            logger.warning(f"Config file not found: {path}, creating empty config")
-            path.write_text(json.dumps({"mcpServers": {}}, indent=2), encoding="utf-8")
-            self._configs = {}
-            return
+        async with async_session_factory() as session:
+            repo = MCPConfigRepository(session)
+            rows = await repo.get_all()
+            self._configs.clear()
+            for row in rows:
+                self._configs[row.name] = MCPServerConfig(
+                    transport=row.transport,
+                    command=row.command,
+                    args=row.args,
+                    env=row.env,
+                    url=row.url,
+                    headers=row.headers,
+                    enabled=row.enabled,
+                )
+            logger.info(f"Loaded {len(self._configs)} MCP server configs from database")
 
-        data = json.loads(path.read_text(encoding="utf-8"))
-        servers = data.get("mcpServers", {})
-        self._configs = {
-            name: MCPServerConfig(**cfg) for name, cfg in servers.items()
-        }
-        logger.info(f"Loaded {len(self._configs)} MCP server configs from {path}")
+    async def _save_config(self) -> None:
+        """Persist all configs to database."""
+        from core.db.engine import async_session_factory
+        from core.db.models.mcp_config import MCPConfigORM
 
-    def _save_config(self) -> None:
-        """Persist current configs to mcp.json."""
-        if not self._config_path:
-            return
-        data = {
-            "mcpServers": {
-                name: cfg.model_dump(exclude_none=True)
-                for name, cfg in self._configs.items()
-            }
-        }
-        self._config_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        async with async_session_factory() as session:
+            for name, cfg in self._configs.items():
+                orm = MCPConfigORM(
+                    name=name,
+                    transport=cfg.transport,
+                    command=cfg.command,
+                    args=cfg.args,
+                    env=cfg.env,
+                    url=cfg.url,
+                    headers=cfg.headers,
+                    enabled=cfg.enabled,
+                )
+                await session.merge(orm)
+            await session.commit()
 
     async def connect_server(self, server_name: str) -> None:
         """Connect to a single MCP server by name."""
@@ -304,12 +309,9 @@ class MCPClientManager:
         return [self.get_server_status(name) for name in self._configs]
 
     async def reload_config(self) -> None:
-        """Reload config and reconcile connections."""
-        if not self._config_path:
-            return
-
+        """Reload config from DB and reconcile connections."""
         old_configs = dict(self._configs)
-        self.load_config(str(self._config_path))
+        await self.load_from_db()
 
         # Disconnect removed servers
         for name in old_configs:
@@ -327,26 +329,32 @@ class MCPClientManager:
 
     # --- Config mutation helpers ---
 
-    def add_server_config(self, name: str, config: MCPServerConfig) -> None:
+    async def add_server_config(self, name: str, config: MCPServerConfig) -> None:
         """Add a server to config and persist."""
         self._configs[name] = config
-        self._save_config()
+        await self._save_config()
 
-    def update_server_config(self, name: str, updates: Dict[str, Any]) -> MCPServerConfig:
+    async def update_server_config(self, name: str, updates: Dict[str, Any]) -> MCPServerConfig:
         """Partially update a server config and persist."""
         if name not in self._configs:
             raise NotFoundError(f"Server '{name}' not found")
         current = self._configs[name].model_dump()
         current.update({k: v for k, v in updates.items() if v is not None})
         self._configs[name] = MCPServerConfig(**current)
-        self._save_config()
+        await self._save_config()
         return self._configs[name]
 
-    def remove_server_config(self, name: str) -> None:
+    async def remove_server_config(self, name: str) -> None:
         """Remove a server from config and persist."""
         if name in self._configs:
             del self._configs[name]
-            self._save_config()
+            from core.db.engine import async_session_factory
+            from core.db.repositories.mcp_config_repo import MCPConfigRepository
+
+            async with async_session_factory() as session:
+                repo = MCPConfigRepository(session)
+                await repo.delete_by_id(name)
+                await session.commit()
 
     @staticmethod
     def _mask_sensitive_value(key: str, value: str) -> str:

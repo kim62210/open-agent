@@ -624,7 +624,7 @@ class AgentOrchestrator:
             prioritized.append((4, memory_prompt))
 
         # P5: Session summary
-        session_summary_prompt = memory_manager.build_session_summary_prompt(user_input=user_input)
+        session_summary_prompt = await memory_manager.build_session_summary_prompt(user_input=user_input)
         if session_summary_prompt:
             prioritized.append((5, session_summary_prompt))
 

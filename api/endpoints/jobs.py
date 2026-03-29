@@ -28,7 +28,7 @@ async def create_job(req: CreateJobRequest):
     if error:
         raise HTTPException(status_code=400, detail=error)
     try:
-        job = job_manager.create_job(req)
+        job = await job_manager.create_job(req)
         job_scheduler.refresh_job(job.id)
         return job
     except Exception as e:
@@ -41,7 +41,7 @@ async def update_job(job_id: str, req: UpdateJobRequest):
         error = validate_job_prompt(req.prompt)
         if error:
             raise HTTPException(status_code=400, detail=error)
-    result = job_manager.update_job(job_id, req)
+    result = await job_manager.update_job(job_id, req)
     if not result:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     job_scheduler.refresh_job(job_id)
@@ -50,17 +50,16 @@ async def update_job(job_id: str, req: UpdateJobRequest):
 
 @router.delete("/{job_id}")
 async def delete_job(job_id: str):
-    # 실행 중이면 먼저 취소
     if job_scheduler.is_running(job_id):
         await job_scheduler.stop_job(job_id)
-    if not job_manager.delete_job(job_id):
+    if not await job_manager.delete_job(job_id):
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     return {"status": "deleted", "job_id": job_id}
 
 
 @router.post("/{job_id}/toggle", response_model=JobInfo)
 async def toggle_job(job_id: str):
-    result = job_manager.toggle_job(job_id)
+    result = await job_manager.toggle_job(job_id)
     if not result:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     job_scheduler.refresh_job(job_id)

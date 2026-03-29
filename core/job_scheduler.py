@@ -124,7 +124,7 @@ class JobScheduler:
             return
         self._task = asyncio.create_task(self._loop())
         logger.info("Job scheduler started (check every %ds)", CHECK_INTERVAL)
-        self._refresh_all_next_run()
+        await self._refresh_all_next_run()
 
     async def stop(self) -> None:
         if self._task:
@@ -141,23 +141,24 @@ class JobScheduler:
         logger.info("Job scheduler stopped")
 
     def refresh_job(self, job_id: str) -> None:
-        """특정 Job의 next_run_at를 재계산합니다."""
+        """특정 Job의 next_run_at를 재계산합니다 (sync wrapper, schedules async)."""
         job = job_manager.get_job(job_id)
         if not job or not job.enabled:
-            job_manager.set_next_run_at(job_id, None)
+            # Schedule async operation
+            asyncio.ensure_future(job_manager.set_next_run_at(job_id, None))
             return
         next_t = calc_next_run(job)
-        job_manager.set_next_run_at(
-            job_id, next_t.isoformat() if next_t else None
+        asyncio.ensure_future(
+            job_manager.set_next_run_at(job_id, next_t.isoformat() if next_t else None)
         )
 
-    def _refresh_all_next_run(self) -> None:
+    async def _refresh_all_next_run(self) -> None:
         for job in job_manager.get_all_jobs():
             if not job.enabled:
-                job_manager.set_next_run_at(job.id, None)
+                await job_manager.set_next_run_at(job.id, None)
                 continue
             next_t = calc_next_run(job)
-            job_manager.set_next_run_at(
+            await job_manager.set_next_run_at(
                 job.id, next_t.isoformat() if next_t else None
             )
 
@@ -199,22 +200,22 @@ class JobScheduler:
             logger.debug(f"Job waiting for slot ({job_id})")
             async with self._semaphore:
                 logger.debug(f"Job acquired slot ({job_id})")
-                run_id = job_manager.start_run(job_id)
+                run_id = await job_manager.start_run(job_id)
                 if not run_id:
                     return
                 try:
                     summary = await execute_job(job_id)
-                    job_manager.finish_run(job_id, run_id, "success", summary=summary)
+                    await job_manager.finish_run(job_id, run_id, "success", summary=summary)
                 except asyncio.CancelledError:
                     logger.info(f"Job cancelled ({job_id})")
-                    job_manager.finish_run(job_id, run_id, "cancelled", summary="Cancelled by user")
+                    await job_manager.finish_run(job_id, run_id, "cancelled", summary="Cancelled by user")
                     raise
                 except asyncio.TimeoutError:
                     logger.warning(f"Job timed out ({job_id})")
-                    job_manager.finish_run(job_id, run_id, "timeout", summary="Execution timed out (300s)")
+                    await job_manager.finish_run(job_id, run_id, "timeout", summary="Execution timed out (300s)")
                 except Exception as e:
                     logger.error(f"Job execution failed ({job_id}): {e}")
-                    job_manager.finish_run(job_id, run_id, "failed", summary=str(e)[:500])
+                    await job_manager.finish_run(job_id, run_id, "failed", summary=str(e)[:500])
         except asyncio.CancelledError:
             # 대기 중 취소 (run_id=None) 또는 실행 중 취소 (re-raise)
             if run_id is None:

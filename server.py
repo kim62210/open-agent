@@ -66,34 +66,40 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
-    # Startup
+    # Initialize database
+    from core.db.engine import init_db
+    logger.info("Initializing database...")
+    await init_db()
+
+    # Startup — load from database
     logger.info("Loading settings...")
-    settings_manager.load_config("settings.json")
+    await settings_manager.load_from_db()
 
     logger.info("Loading MCP config and connecting servers...")
-    mcp_manager.load_config("mcp.json")
+    await mcp_manager.load_from_db()
     await mcp_manager.connect_all()
 
     logger.info("Loading skills...")
-    skill_manager.load_config("skills.json")
+    await skill_manager.load_disabled_from_db()
     bundled = str((Path(__file__).parent / "bundled_skills").resolve())
     skill_manager.set_bundled_dir(bundled)
     skill_manager.discover_skills(["skills", bundled])
 
     logger.info("Loading pages...")
-    page_manager.load_config("pages.json", "pages")
+    page_manager.init_pages_dir("pages")
+    await page_manager.load_from_db()
 
     logger.info("Loading sessions...")
-    session_manager.load_config("sessions.json", "sessions")
+    await session_manager.load_from_db()
 
     logger.info("Loading memories...")
-    memory_manager.load_config("memories.json")
+    await memory_manager.load_from_db()
 
     logger.info("Loading workspaces...")
-    workspace_manager.load_config("workspaces.json")
+    await workspace_manager.load_from_db()
 
     logger.info("Loading jobs...")
-    job_manager.load_config("jobs.json")
+    await job_manager.load_from_db()
 
     logger.info("Starting job scheduler...")
     await job_scheduler.start()
@@ -103,6 +109,9 @@ async def lifespan(app: FastAPI):
     await job_scheduler.stop()
     logger.info("Disconnecting all MCP servers...")
     await mcp_manager.disconnect_all()
+    logger.info("Closing database...")
+    from core.db.engine import close_db
+    await close_db()
 
 
 app = FastAPI(title="Open Agent API", lifespan=lifespan)

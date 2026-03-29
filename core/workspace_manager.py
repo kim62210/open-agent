@@ -1,4 +1,3 @@
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -32,52 +31,47 @@ IGNORED_FILES = {".DS_Store", "Thumbs.db"}
 class WorkspaceManager:
     def __init__(self):
         self._workspaces: Dict[str, WorkspaceInfo] = {}
-        self._config_path: Optional[Path] = None
 
-    def load_config(self, config_path: str) -> None:
-        path = Path(config_path)
-        if not path.is_absolute():
-            from open_agent.config import get_config_path
-            path = get_config_path(config_path)
-        self._config_path = path
+    async def load_from_db(self) -> None:
+        """Load all workspaces from database into in-memory cache."""
+        from core.db.engine import async_session_factory
+        from core.db.repositories.workspace_repo import WorkspaceRepository
 
-        if not path.exists():
-            path.write_text(json.dumps({"workspaces": {}}, indent=2), encoding="utf-8")
-            self._workspaces = {}
-            return
+        async with async_session_factory() as session:
+            repo = WorkspaceRepository(session)
+            rows = await repo.get_all()
+            self._workspaces.clear()
+            for row in rows:
+                self._workspaces[row.id] = WorkspaceInfo(
+                    id=row.id,
+                    name=row.name,
+                    path=row.path,
+                    description=row.description,
+                    created_at=row.created_at,
+                    is_active=row.is_active,
+                )
+            logger.info(f"Loaded {len(self._workspaces)} workspaces from database")
 
-        data = json.loads(path.read_text(encoding="utf-8"))
-        for wid, info in data.get("workspaces", {}).items():
-            self._workspaces[wid] = WorkspaceInfo(
-                id=wid,
-                name=info["name"],
-                path=info["path"],
-                description=info.get("description", ""),
-                created_at=info.get("created_at", ""),
-                is_active=info.get("is_active", False),
+    async def _persist_workspace(self, ws: WorkspaceInfo) -> None:
+        """Write a single workspace to database."""
+        from core.db.engine import async_session_factory
+        from core.db.models.workspace import WorkspaceORM
+
+        async with async_session_factory() as session:
+            orm = WorkspaceORM(
+                id=ws.id,
+                name=ws.name,
+                path=ws.path,
+                description=ws.description,
+                created_at=ws.created_at,
+                is_active=ws.is_active,
             )
-        logger.info(f"Loaded {len(self._workspaces)} workspaces from {path}")
-
-    def _save_config(self) -> None:
-        if not self._config_path:
-            return
-        data: dict = {"workspaces": {}}
-        for wid, w in self._workspaces.items():
-            data["workspaces"][wid] = {
-                "name": w.name,
-                "path": w.path,
-                "description": w.description,
-                "created_at": w.created_at,
-                "is_active": w.is_active,
-            }
-        self._config_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+            await session.merge(orm)
+            await session.commit()
 
     # --- CRUD ---
 
-    def create_workspace(self, name: str, path: str, description: str = "") -> WorkspaceInfo:
+    async def create_workspace(self, name: str, path: str, description: str = "") -> WorkspaceInfo:
         abs_path = Path(path).expanduser().resolve()
         if not abs_path.is_dir():
             raise NotFoundError(f"Directory not found: {path}")
@@ -92,7 +86,7 @@ class WorkspaceManager:
             is_active=False,
         )
         self._workspaces[wid] = workspace
-        self._save_config()
+        await self._persist_workspace(workspace)
         logger.info(f"Created workspace: {name} ({abs_path})")
         return workspace
 
@@ -102,7 +96,7 @@ class WorkspaceManager:
     def get_workspace(self, workspace_id: str) -> Optional[WorkspaceInfo]:
         return self._workspaces.get(workspace_id)
 
-    def update_workspace(
+    async def update_workspace(
         self, workspace_id: str, name: Optional[str] = None, description: Optional[str] = None
     ) -> Optional[WorkspaceInfo]:
         ws = self._workspaces.get(workspace_id)
@@ -113,33 +107,57 @@ class WorkspaceManager:
         if description is not None:
             ws.description = description
         self._workspaces[workspace_id] = ws
-        self._save_config()
+        await self._persist_workspace(ws)
         return ws
 
-    def delete_workspace(self, workspace_id: str) -> bool:
+    async def delete_workspace(self, workspace_id: str) -> bool:
         if workspace_id not in self._workspaces:
             return False
+
+        from core.db.engine import async_session_factory
+        from core.db.repositories.workspace_repo import WorkspaceRepository
+
+        async with async_session_factory() as session:
+            repo = WorkspaceRepository(session)
+            await repo.delete_by_id(workspace_id)
+            await session.commit()
+
         self._workspaces.pop(workspace_id)
-        self._save_config()
         logger.info(f"Deleted workspace: {workspace_id}")
         return True
 
-    def set_active(self, workspace_id: str) -> Optional[WorkspaceInfo]:
+    async def set_active(self, workspace_id: str) -> Optional[WorkspaceInfo]:
         ws = self._workspaces.get(workspace_id)
         if not ws:
             return None
-        # 기존 활성 워크스페이스 비활성화
+
+        from core.db.engine import async_session_factory
+        from core.db.repositories.workspace_repo import WorkspaceRepository
+
         for w in self._workspaces.values():
             w.is_active = False
         ws.is_active = True
-        self._save_config()
+
+        async with async_session_factory() as session:
+            repo = WorkspaceRepository(session)
+            await repo.set_active(workspace_id)
+            await session.commit()
+
         logger.info(f"Activated workspace: {ws.name}")
         return ws
 
-    def deactivate(self) -> None:
+    async def deactivate(self) -> None:
+        from core.db.engine import async_session_factory
+        from sqlalchemy import update
+        from core.db.models.workspace import WorkspaceORM
+
         for w in self._workspaces.values():
             w.is_active = False
-        self._save_config()
+
+        async with async_session_factory() as session:
+            await session.execute(update(WorkspaceORM).values(is_active=False))
+            await session.commit()
+
         logger.info("All workspaces deactivated")
 
     def get_active(self) -> Optional[WorkspaceInfo]:
@@ -148,14 +166,13 @@ class WorkspaceManager:
                 return w
         return None
 
-    # --- File Operations ---
+    # --- File Operations (unchanged — filesystem only) ---
 
     def _resolve_safe_path(self, workspace_id: str, relative_path: str) -> Path:
         ws = self._workspaces.get(workspace_id)
         if not ws:
             raise NotFoundError(f"Workspace not found: {workspace_id}")
         root = Path(ws.path).resolve()
-        # 절대경로가 워크스페이스 내부이면 상대경로로 변환
         abs_candidate = Path(relative_path).resolve()
         if abs_candidate != Path(relative_path) and abs_candidate.is_relative_to(root):
             relative_path = str(abs_candidate.relative_to(root))
@@ -239,7 +256,6 @@ class WorkspaceManager:
         )
 
     def get_raw_file_path(self, workspace_id: str, path: str) -> Path:
-        """바이너리 파일 서빙을 위한 경로 반환 (보안 검증 포함)."""
         target = self._resolve_safe_path(workspace_id, path)
         if not target.is_file():
             raise NotFoundError(f"File not found: {path}")
@@ -289,7 +305,6 @@ class WorkspaceManager:
 
     def write_file(self, workspace_id: str, path: str, content: str) -> str:
         target = self._resolve_safe_path(workspace_id, path)
-        # 빈 content로 기존 파일 덮어쓰기 차단 (삭제 우회 방지)
         if not content.strip() and target.is_file():
             raise PermissionDeniedError(
                 "빈 내용으로 기존 파일을 덮어쓸 수 없습니다. "
@@ -311,11 +326,9 @@ class WorkspaceManager:
 
         content = target.read_text(encoding="utf-8")
 
-        # 4-pass fuzzy matching: exact → rstrip → trim → unicode
         match_mode, pos, matched_len = fuzzy_find(content, req.old_string)
 
         if match_mode is None:
-            # Build detailed error with closest match hint
             line_count = len(content.splitlines())
             best_line, ratio, snippet = find_closest_match(content, req.old_string)
             msg = f"old_string not found in {req.path} ({line_count} lines)."
@@ -343,7 +356,6 @@ class WorkspaceManager:
                 new_content = content.replace(req.old_string, req.new_string, 1)
             replaced = count if req.replace_all else 1
         else:
-            # Fuzzy match: replace matched line range
             new_content = fuzzy_replace(content, req.old_string, req.new_string, match_mode)
             replaced = 1
 
