@@ -1043,19 +1043,38 @@ class AgentOrchestrator:
             _tool_choice_override = None  # 사용 후 리셋
             yield {"type": "thinking", "content": f"LLM 호출 중... (라운드 {round_num + 1})"}
 
-            response = await self.llm.chat_completion(
+            # Token-level streaming via chat_stream()
+            model_lower = (self.llm._get_config().get("model") or "").lower()
+            _parallel = "gpt-oss" not in model_lower
+
+            full_content = ""
+            tool_calls_result = None
+            async for event in self.llm.chat_stream(
                 messages,
                 tools=all_tools if all_tools else None,
                 tool_choice=tool_choice,
                 reasoning_effort=_effort,
-            )
+                parallel_tool_calls=_parallel,
+            ):
+                if event["type"] == "content_delta":
+                    yield {"type": "content_delta", "content": event["content"]}
+                    full_content += event["content"]
+                elif event["type"] == "tool_calls":
+                    tool_calls_result = event["tool_calls"]
+                elif event["type"] == "done":
+                    if not tool_calls_result:
+                        full_content = event.get("content", full_content)
 
-            choices = response.get("choices") or []
-            if not choices:
-                logger.warning("LLM returned empty choices list")
-                yield {"type": "content", "content": "응답을 생성할 수 없습니다."}
-                break
-            message = choices[0]["message"]
+            # Construct message dict from streamed results
+            if tool_calls_result:
+                message = {
+                    "role": "assistant",
+                    "content": full_content or None,
+                    "tool_calls": tool_calls_result,
+                }
+            else:
+                message = {"role": "assistant", "content": full_content}
+            response = {"choices": [{"message": message}]}
 
             if not message.get("tool_calls"):
                 content = (message.get("content") or "").strip()
