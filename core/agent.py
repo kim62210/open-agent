@@ -141,6 +141,10 @@ _CACHEABLE_TOOLS = {
     "list_scheduled_tasks",
 }
 
+_HIGH_REASONING_WORKFLOWS = frozenset({
+    "debug", "impl", "coding-pipeline", "plan", "review",
+})
+
 _SELF_ASSESSMENT_INTERVAL = 8  # 매 N 라운드마다 자기 점검 주입
 _TOOL_RESULT_COMPACT_LEN = 800  # 축소 시 도구 결과 최대 길이
 _COMPACT_KEEP_RECENT_TURNS = 4  # 압축 시 원본 보존할 최근 턴 수 (기본값, 동적 스케일링됨)
@@ -827,6 +831,32 @@ class AgentOrchestrator:
             logger.error("Tool call error (%s): %s", function_name, e)
             return f"Error: {e}"
 
+    @staticmethod
+    def _estimate_reasoning_effort(
+        user_message: str,
+        workflow_match: dict | None,
+        turn_count: int,
+    ) -> str | None:
+        """Estimate appropriate reasoning effort tier based on request complexity.
+
+        Inspired by ATLAS Budget Forcing 5-tier system, simplified to 3 tiers:
+        - "low": simple conversational, MCP lookups
+        - "medium": moderate tasks, general tool use
+        - "high": complex coding, debugging, planning
+        - None: not determined (provider falls back to default)
+        """
+        # Complex workflow requiring deep reasoning
+        if workflow_match and workflow_match.get("name") in _HIGH_REASONING_WORKFLOWS:
+            return "high"
+        # Short conversational input without workflow
+        if len(user_message) < 30 and not workflow_match:
+            return "low"
+        # Single-turn MCP tool lookup without workflow
+        if not workflow_match and turn_count <= 1:
+            return "low"
+        # Default: moderate reasoning
+        return "medium"
+
     async def _run_core(
         self,
         messages: List[Dict[str, Any]],
@@ -887,8 +917,11 @@ class AgentOrchestrator:
 
         max_rounds = max(settings_manager.llm.max_tool_rounds, 0)  # H-10: 음수 방지
         _tool_choice_override = None  # 빈 응답 재시도 시 다음 라운드 tool_choice 오버라이드
-        # 워크플로우 활성화 시 reasoning_effort 상향
-        _effort = "high" if workflow_match else None
+        # Adaptive reasoning effort based on request complexity
+        turn_count = sum(1 for m in messages if m.get("role") == "user")
+        _effort = self._estimate_reasoning_effort(
+            last_user_msg or "", workflow_match, turn_count,
+        )
 
         # 초기 컨텍스트 상태 전송
         initial_status = self._get_context_status(messages, all_tools)
