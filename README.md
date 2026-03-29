@@ -118,8 +118,8 @@ uv run mypy .
 └─────┼─────────┼──────────────┼─────────────────┼────────┘
       │         │              │                 │
   ┌───▼───┐ ┌──▼───┐   ┌──────▼──────┐  ┌──────▼──────┐
-  │LiteLLM│ │ MCP  │   │  SKILL.md   │  │   JSON      │
-  │ Proxy │ │Servers│   │  (YAML+MD)  │  │  Storage    │
+  │LiteLLM│ │ MCP  │   │  SKILL.md   │  │  SQLite/    │
+  │ Proxy │ │Servers│   │  (YAML+MD)  │  │  PostgreSQL │
   └───────┘ └──────┘   └─────────────┘  └─────────────┘
 ```
 
@@ -339,21 +339,30 @@ The `workspace_bash` tool blocks 10 categories of destructive shell patterns bef
 
 ## Data Storage
 
-All runtime data is stored in `~/.open-agent/` as JSON files:
+All runtime data is stored in `~/.open-agent/`:
 
-| File | Description |
-|------|-------------|
-| `.env` | API keys (dotenv) |
-| `settings.json` | LLM, theme, and memory settings |
-| `mcp.json` | MCP server configurations |
-| `skills.json` | Skill enable/disable state |
-| `pages.json` | Page and folder metadata |
-| `workspaces.json` | Registered workspaces |
-| `memories.json` | Long-term memory store |
-| `jobs.json` | Scheduled job definitions |
-| `sessions/` | Per-session message history (JSON files) |
-| `skills/` | User-created skill directories |
-| `pages/` | Uploaded HTML files |
+| Resource | Storage | Description |
+|----------|---------|-------------|
+| `open_agent.db` | **SQLite** (default) | All structured data (sessions, memories, jobs, settings, etc.) |
+| `.env` | File | API keys (dotenv) |
+| `skills/` | Filesystem | User-created skill directories (SKILL.md + scripts) |
+| `pages/` | Filesystem | Uploaded HTML files and bundles |
+
+### Database Backend
+
+By default, Open Agent uses **SQLite with WAL mode** — zero configuration required. For multi-user deployments, set the `DATABASE_URL` environment variable to use PostgreSQL:
+
+```bash
+# Default: SQLite (automatic)
+# ~/.open-agent/open_agent.db
+
+# PostgreSQL override
+export DATABASE_URL=postgresql://user:pass@localhost:5432/open_agent
+```
+
+### Migration from JSON
+
+Existing installations using JSON files (`settings.json`, `sessions.json`, etc.) are **automatically migrated** to the database on first startup. Original JSON files are preserved as backups.
 
 ## Environment Variables
 
@@ -389,7 +398,7 @@ We welcome contributions! Please see our development workflow:
 
 ## Roadmap
 
-- [ ] **Sprint 2**: Database layer (JSON → SQLite/PostgreSQL, concurrency safety)
+- [x] **Sprint 2**: Database layer (SQLite default + PostgreSQL optional, async repositories)
 - [ ] **Sprint 3**: Authentication (JWT + RBAC + rate limiting)
 - [ ] **Sprint 4**: Operations (Docker, CI/CD, observability)
 - [ ] Frontend source code open-sourcing (currently pre-built only)
