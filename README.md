@@ -371,9 +371,14 @@ Existing installations using JSON files (`settings.json`, `sessions.json`, etc.)
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `ANTHROPIC_API_KEY` | Anthropic API key | — |
 | `GOOGLE_API_KEY` | Google AI API key | — |
+| `DATABASE_URL` | Database URL (PostgreSQL override) | SQLite (auto) |
 | `OPEN_AGENT_DEV` | Enable dev mode (`1` = colored logs, CORS `*`) | `0` |
 | `OPEN_AGENT_LOG_LEVEL` | Log level override | `INFO` |
 | `OPEN_AGENT_ENV` | Environment name (`dev` / `prod`) | `prod` |
+| `OPEN_AGENT_JWT_SECRET_KEY` | JWT signing secret (auto-generated if empty) | auto |
+| `OPEN_AGENT_ACCESS_TOKEN_EXPIRE_MINUTES` | Access token TTL | `30` |
+| `OPEN_AGENT_REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token TTL | `7` |
+| `OPEN_AGENT_REGISTRATION_ENABLED` | Allow new user registration | `true` |
 
 ## Contributing
 
@@ -399,7 +404,7 @@ We welcome contributions! Please see our development workflow:
 ## Roadmap
 
 - [x] **Sprint 2**: Database layer (SQLite default + PostgreSQL optional, async repositories)
-- [ ] **Sprint 3**: Authentication (JWT + RBAC + rate limiting)
+- [x] **Sprint 3**: Authentication (JWT + RBAC + API keys + rate limiting)
 - [ ] **Sprint 4**: Operations (Docker, CI/CD, observability)
 - [ ] Frontend source code open-sourcing (currently pre-built only)
 - [ ] Plugin marketplace for community skills
