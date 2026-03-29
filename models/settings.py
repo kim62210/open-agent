@@ -21,6 +21,7 @@ class LLMSettings(BaseModel):
     context_window: int = 0  # 모델 컨텍스트 윈도우 (토큰, 0=LiteLLM 자동 감지)
     compact_threshold: float = 0.7  # 컨텍스트 사용률이 이 비율 초과 시 압축 트리거
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    timeout: int = 120  # LLM request timeout in seconds
 
 
 class ProfileSettings(BaseModel):

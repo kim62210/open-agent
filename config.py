@@ -95,12 +95,19 @@ def init_data_dir() -> Path:
     env_path = data_dir / ".env"
     if not env_path.exists():
         env_path.write_text(
-            "# 사용할 LLM 프로바이더의 API 키를 설정하세요\n"
+            "# Set the API key for your LLM provider\n"
             "# GOOGLE_API_KEY=your-google-api-key\n"
             "# OPENAI_API_KEY=your-openai-api-key\n"
             "# ANTHROPIC_API_KEY=your-anthropic-api-key\n"
             "# XAI_API_KEY=your-xai-api-key\n"
-            "# OPENROUTER_API_KEY=your-openrouter-api-key\n",
+            "# OPENROUTER_API_KEY=your-openrouter-api-key\n"
+            "# GROQ_API_KEY=your-groq-api-key\n"
+            "# DEEPSEEK_API_KEY=your-deepseek-api-key\n"
+            "# MISTRAL_API_KEY=your-mistral-api-key\n"
+            "# COHERE_API_KEY=your-cohere-api-key\n"
+            "# TOGETHERAI_API_KEY=your-together-api-key\n"
+            "# PERPLEXITYAI_API_KEY=your-perplexity-api-key\n"
+            "# FIREWORKS_AI_API_KEY=your-fireworks-api-key\n",
             encoding="utf-8",
         )
 
