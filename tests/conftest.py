@@ -174,7 +174,18 @@ async def settings_manager(_patch_db_factory):
 
 @pytest.fixture()
 def mock_llm(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
-    """Mock litellm.acompletion so tests run without real LLM calls."""
+    """Mock LLM calls so tests run without real API calls.
+
+    Patches llm_client.simple_completion (used by memory_manager) and
+    litellm.acompletion (used by llm.py internals) to return safe defaults.
+    """
+    # Mock simple_completion (used by memory_manager via llm_client)
+    simple_mock = AsyncMock(return_value="mocked response")
+    monkeypatch.setattr(
+        "open_agent.core.llm.LLMClient.simple_completion", simple_mock,
+    )
+
+    # Also mock acompletion at the llm module level for chat_completion/classify
     mock_message = MagicMock()
     mock_message.content = "mocked response"
     mock_message.reasoning_content = None
@@ -184,12 +195,14 @@ def mock_llm(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 
     mock_response = MagicMock()
     mock_response.choices = [mock_choice]
+    mock_response.model_dump = MagicMock(return_value={
+        "choices": [{"message": {"content": "mocked response", "tool_calls": None}}],
+    })
 
-    async_mock = AsyncMock(return_value=mock_response)
+    acompletion_mock = AsyncMock(return_value=mock_response)
+    monkeypatch.setattr("open_agent.core.llm.acompletion", acompletion_mock)
 
-    monkeypatch.setattr("open_agent.core.memory_manager.acompletion", async_mock)
-
-    return async_mock
+    return simple_mock
 
 
 @pytest.fixture()
