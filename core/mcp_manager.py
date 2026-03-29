@@ -36,6 +36,7 @@ class MCPClientManager:
     _CACHE_TTL = 300.0  # 5분 TTL
 
     def __init__(self):
+        self._lock = asyncio.Lock()
         self._configs: Dict[str, MCPServerConfig] = {}
         self._connections: Dict[str, Tuple[AsyncExitStack, ClientSession]] = {}
         self._statuses: Dict[str, MCPServerStatus] = {}
@@ -46,24 +47,25 @@ class MCPClientManager:
 
     async def load_from_db(self) -> None:
         """Load MCP server configs from database."""
-        from core.db.engine import async_session_factory
-        from core.db.repositories.mcp_config_repo import MCPConfigRepository
+        async with self._lock:
+            from core.db.engine import async_session_factory
+            from core.db.repositories.mcp_config_repo import MCPConfigRepository
 
-        async with async_session_factory() as session:
-            repo = MCPConfigRepository(session)
-            rows = await repo.get_all()
-            self._configs.clear()
-            for row in rows:
-                self._configs[row.name] = MCPServerConfig(
-                    transport=row.transport,
-                    command=row.command,
-                    args=row.args,
-                    env=row.env,
-                    url=row.url,
-                    headers=row.headers,
-                    enabled=row.enabled,
-                )
-            logger.info(f"Loaded {len(self._configs)} MCP server configs from database")
+            async with async_session_factory() as session:
+                repo = MCPConfigRepository(session)
+                rows = await repo.get_all()
+                self._configs.clear()
+                for row in rows:
+                    self._configs[row.name] = MCPServerConfig(
+                        transport=row.transport,
+                        command=row.command,
+                        args=row.args,
+                        env=row.env,
+                        url=row.url,
+                        headers=row.headers,
+                        enabled=row.enabled,
+                    )
+                logger.info(f"Loaded {len(self._configs)} MCP server configs from database")
 
     async def _save_config(self) -> None:
         """Persist all configs to database."""
@@ -169,8 +171,8 @@ class MCPClientManager:
             # Clean up the exit stack on failure
             try:
                 await exit_stack.aclose()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(f"Failed to clean up exit stack for '{server_name}'", exc_info=exc)
 
     async def disconnect_server(self, server_name: str) -> None:
         """Disconnect from a single MCP server."""
@@ -331,30 +333,33 @@ class MCPClientManager:
 
     async def add_server_config(self, name: str, config: MCPServerConfig) -> None:
         """Add a server to config and persist."""
-        self._configs[name] = config
-        await self._save_config()
+        async with self._lock:
+            self._configs[name] = config
+            await self._save_config()
 
     async def update_server_config(self, name: str, updates: Dict[str, Any]) -> MCPServerConfig:
         """Partially update a server config and persist."""
-        if name not in self._configs:
-            raise NotFoundError(f"Server '{name}' not found")
-        current = self._configs[name].model_dump()
-        current.update({k: v for k, v in updates.items() if v is not None})
-        self._configs[name] = MCPServerConfig(**current)
-        await self._save_config()
-        return self._configs[name]
+        async with self._lock:
+            if name not in self._configs:
+                raise NotFoundError(f"Server '{name}' not found")
+            current = self._configs[name].model_dump()
+            current.update({k: v for k, v in updates.items() if v is not None})
+            self._configs[name] = MCPServerConfig(**current)
+            await self._save_config()
+            return self._configs[name]
 
     async def remove_server_config(self, name: str) -> None:
         """Remove a server from config and persist."""
-        if name in self._configs:
-            del self._configs[name]
-            from core.db.engine import async_session_factory
-            from core.db.repositories.mcp_config_repo import MCPConfigRepository
+        async with self._lock:
+            if name in self._configs:
+                del self._configs[name]
+                from core.db.engine import async_session_factory
+                from core.db.repositories.mcp_config_repo import MCPConfigRepository
 
-            async with async_session_factory() as session:
-                repo = MCPConfigRepository(session)
-                await repo.delete_by_id(name)
-                await session.commit()
+                async with async_session_factory() as session:
+                    repo = MCPConfigRepository(session)
+                    await repo.delete_by_id(name)
+                    await session.commit()
 
     @staticmethod
     def _mask_sensitive_value(key: str, value: str) -> str:

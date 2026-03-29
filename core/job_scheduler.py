@@ -168,8 +168,8 @@ class JobScheduler:
                 await self._tick()
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                logger.exception("Scheduler tick error")
+            except Exception as exc:
+                logger.exception("Scheduler tick error", exc_info=exc)
             await asyncio.sleep(CHECK_INTERVAL)
 
     async def _tick(self) -> None:

@@ -268,8 +268,8 @@ class SandboxManager:
             try:
                 proc.kill()
                 await proc.wait()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Sandbox teardown failed", exc_info=exc)
             return {
                 "exit_code": -1,
                 "stdout": "",

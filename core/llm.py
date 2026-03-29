@@ -100,8 +100,8 @@ class LLMClient:
                 ctx = info.get("max_input_tokens", 0)
                 if ctx and ctx > 0:
                     return ctx
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("API key resolution failed", exc_info=exc)
 
         # 3. 폴백
         return _DEFAULT_CONTEXT_WINDOW
@@ -119,8 +119,8 @@ class LLMClient:
                 # LiteLLM 네이티브: tools 파라미터 직접 전달 (수동 추정 불필요)
                 count = _litellm_token_counter(model=model, messages=messages, tools=tools)
                 return count
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("API key resolution failed", exc_info=exc)
             # tools 파라미터 미지원 시 messages만 카운트 + 수동 도구 추정
             try:
                 count = _litellm_token_counter(model=model, messages=messages)

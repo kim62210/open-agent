@@ -45,52 +45,54 @@ def _extract_mcp_servers_from_tools(tool_names: List[str]) -> List[str]:
 
 class JobManager:
     def __init__(self):
+        self._lock = asyncio.Lock()
         self._jobs: Dict[str, JobInfo] = {}
 
     async def load_from_db(self) -> None:
         """Load all jobs from database into in-memory cache."""
-        from core.db.engine import async_session_factory
-        from core.db.repositories.job_repo import JobRepository
+        async with self._lock:
+            from core.db.engine import async_session_factory
+            from core.db.repositories.job_repo import JobRepository
 
-        async with async_session_factory() as session:
-            repo = JobRepository(session)
-            rows = await repo.get_all()
-            self._jobs.clear()
-            for row in rows:
-                # Load run records
-                records = await repo.get_run_records(row.id, limit=MAX_HISTORY)
-                run_history = [
-                    JobRunRecord(
-                        run_id=r.run_id,
-                        started_at=r.started_at,
-                        finished_at=r.finished_at,
-                        status=r.status,
-                        duration_seconds=r.duration_seconds,
-                        summary=r.summary,
+            async with async_session_factory() as session:
+                repo = JobRepository(session)
+                rows = await repo.get_all()
+                self._jobs.clear()
+                for row in rows:
+                    # Load run records
+                    records = await repo.get_run_records(row.id, limit=MAX_HISTORY)
+                    run_history = [
+                        JobRunRecord(
+                            run_id=r.run_id,
+                            started_at=r.started_at,
+                            finished_at=r.finished_at,
+                            status=r.status,
+                            duration_seconds=r.duration_seconds,
+                            summary=r.summary,
+                        )
+                        for r in records
+                    ]
+                    self._jobs[row.id] = JobInfo(
+                        id=row.id,
+                        name=row.name,
+                        description=row.description,
+                        prompt=row.prompt,
+                        skill_names=row.skill_names or [],
+                        mcp_server_names=row.mcp_server_names or [],
+                        schedule_type=row.schedule_type,
+                        schedule_config=row.schedule_config or {},
+                        enabled=row.enabled,
+                        created_at=row.created_at,
+                        updated_at=row.updated_at,
+                        next_run_at=row.next_run_at,
+                        last_run_at=row.last_run_at,
+                        last_run_status=row.last_run_status,
+                        last_run_summary=row.last_run_summary,
+                        run_count=row.run_count,
+                        consecutive_failures=row.consecutive_failures,
+                        run_history=run_history,
                     )
-                    for r in records
-                ]
-                self._jobs[row.id] = JobInfo(
-                    id=row.id,
-                    name=row.name,
-                    description=row.description,
-                    prompt=row.prompt,
-                    skill_names=row.skill_names or [],
-                    mcp_server_names=row.mcp_server_names or [],
-                    schedule_type=row.schedule_type,
-                    schedule_config=row.schedule_config or {},
-                    enabled=row.enabled,
-                    created_at=row.created_at,
-                    updated_at=row.updated_at,
-                    next_run_at=row.next_run_at,
-                    last_run_at=row.last_run_at,
-                    last_run_status=row.last_run_status,
-                    last_run_summary=row.last_run_summary,
-                    run_count=row.run_count,
-                    consecutive_failures=row.consecutive_failures,
-                    run_history=run_history,
-                )
-            logger.info(f"Loaded {len(self._jobs)} jobs from database")
+                logger.info(f"Loaded {len(self._jobs)} jobs from database")
 
     async def _persist_job(self, job: JobInfo) -> None:
         """Write a single job to database."""
@@ -127,117 +129,122 @@ class JobManager:
         return self._jobs.get(job_id)
 
     async def create_job(self, req: "CreateJobRequest") -> JobInfo:
-        from open_agent.models.job import CreateJobRequest  # noqa: F811
+        async with self._lock:
+            from open_agent.models.job import CreateJobRequest  # noqa: F811
 
-        error = validate_job_prompt(req.prompt)
-        if error:
-            raise ValueError(error)
+            error = validate_job_prompt(req.prompt)
+            if error:
+                raise ValueError(error)
 
-        # Auto-delete jobs with same name
-        existing = [jid for jid, j in self._jobs.items() if j.name == req.name]
-        for jid in existing:
-            self._jobs.pop(jid, None)
-            from core.db.engine import async_session_factory
-            from core.db.repositories.job_repo import JobRepository
-            async with async_session_factory() as session:
-                repo = JobRepository(session)
-                await repo.delete_by_id(jid)
-                await session.commit()
-            logger.info(f"Auto-replaced existing job with same name: {req.name} ({jid})")
+            # Auto-delete jobs with same name
+            existing = [jid for jid, j in self._jobs.items() if j.name == req.name]
+            for jid in existing:
+                self._jobs.pop(jid, None)
+                from core.db.engine import async_session_factory
+                from core.db.repositories.job_repo import JobRepository
+                async with async_session_factory() as session:
+                    repo = JobRepository(session)
+                    await repo.delete_by_id(jid)
+                    await session.commit()
+                logger.info(f"Auto-replaced existing job with same name: {req.name} ({jid})")
 
-        job_id = uuid.uuid4().hex[:8]
-        now = datetime.now(timezone.utc).isoformat()
-        job = JobInfo(
-            id=job_id,
-            name=req.name,
-            description=req.description,
-            prompt=req.prompt,
-            skill_names=req.skill_names,
-            mcp_server_names=req.mcp_server_names,
-            schedule_type=req.schedule_type,
-            schedule_config=req.schedule_config,
-            created_at=now,
-            updated_at=now,
-        )
-        self._jobs[job_id] = job
-        await self._persist_job(job)
-        logger.info(f"Created job: {req.name} ({job_id})")
-        return job
+            job_id = uuid.uuid4().hex[:8]
+            now = datetime.now(timezone.utc).isoformat()
+            job = JobInfo(
+                id=job_id,
+                name=req.name,
+                description=req.description,
+                prompt=req.prompt,
+                skill_names=req.skill_names,
+                mcp_server_names=req.mcp_server_names,
+                schedule_type=req.schedule_type,
+                schedule_config=req.schedule_config,
+                created_at=now,
+                updated_at=now,
+            )
+            self._jobs[job_id] = job
+            await self._persist_job(job)
+            logger.info(f"Created job: {req.name} ({job_id})")
+            return job
 
     async def update_job(self, job_id: str, req: "UpdateJobRequest") -> Optional[JobInfo]:
-        job = self._jobs.get(job_id)
-        if not job:
-            return None
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
 
-        update_data = req.model_dump(exclude_none=True)
-        for field, value in update_data.items():
-            setattr(job, field, value)
-        job.updated_at = datetime.now(timezone.utc).isoformat()
+            update_data = req.model_dump(exclude_none=True)
+            for field, value in update_data.items():
+                setattr(job, field, value)
+            job.updated_at = datetime.now(timezone.utc).isoformat()
 
-        self._jobs[job_id] = job
-        await self._persist_job(job)
-        logger.info(f"Updated job: {job.name} ({job_id})")
-        return job
+            self._jobs[job_id] = job
+            await self._persist_job(job)
+            logger.info(f"Updated job: {job.name} ({job_id})")
+            return job
 
     async def delete_job(self, job_id: str) -> bool:
-        job = self._jobs.pop(job_id, None)
-        if not job:
-            return False
+        async with self._lock:
+            job = self._jobs.pop(job_id, None)
+            if not job:
+                return False
 
-        from core.db.engine import async_session_factory
-        from core.db.repositories.job_repo import JobRepository
+            from core.db.engine import async_session_factory
+            from core.db.repositories.job_repo import JobRepository
 
-        async with async_session_factory() as session:
-            repo = JobRepository(session)
-            await repo.delete_by_id(job_id)
-            await session.commit()
+            async with async_session_factory() as session:
+                repo = JobRepository(session)
+                await repo.delete_by_id(job_id)
+                await session.commit()
 
-        logger.info(f"Deleted job: {job.name} ({job_id})")
-        return True
+            logger.info(f"Deleted job: {job.name} ({job_id})")
+            return True
 
     async def toggle_job(self, job_id: str) -> Optional[JobInfo]:
-        job = self._jobs.get(job_id)
-        if not job:
-            return None
-        job.enabled = not job.enabled
-        job.updated_at = datetime.now(timezone.utc).isoformat()
-        self._jobs[job_id] = job
-        await self._persist_job(job)
-        logger.info(f"Toggled job: {job.name} → enabled={job.enabled}")
-        return job
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            job.enabled = not job.enabled
+            job.updated_at = datetime.now(timezone.utc).isoformat()
+            self._jobs[job_id] = job
+            await self._persist_job(job)
+            logger.info(f"Toggled job: {job.name} → enabled={job.enabled}")
+            return job
 
     # --- Run state & history ---
 
     async def start_run(self, job_id: str) -> Optional[str]:
         """Record run start and return run_id."""
-        job = self._jobs.get(job_id)
-        if not job:
-            return None
-        now = datetime.now(timezone.utc).isoformat()
-        run_id = uuid.uuid4().hex[:8]
-        job.last_run_status = "running"
-        job.last_run_at = now
-        job.last_run_summary = None
-        job.updated_at = now
-        job.run_history.insert(0, JobRunRecord(
-            run_id=run_id, started_at=now, status="running",
-        ))
-        self._jobs[job_id] = job
-
-        # Persist job + run record
-        from core.db.engine import async_session_factory
-        from core.db.models.job import JobRunRecordORM
-        from core.db.repositories.job_repo import JobRepository
-
-        async with async_session_factory() as session:
-            repo = JobRepository(session)
-            await repo.add_run_record(JobRunRecordORM(
-                run_id=run_id, job_id=job_id, started_at=now, status="running",
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            now = datetime.now(timezone.utc).isoformat()
+            run_id = uuid.uuid4().hex[:8]
+            job.last_run_status = "running"
+            job.last_run_at = now
+            job.last_run_summary = None
+            job.updated_at = now
+            job.run_history.insert(0, JobRunRecord(
+                run_id=run_id, started_at=now, status="running",
             ))
-            await session.commit()
+            self._jobs[job_id] = job
 
-        await self._persist_job(job)
-        return run_id
+            # Persist job + run record
+            from core.db.engine import async_session_factory
+            from core.db.models.job import JobRunRecordORM
+            from core.db.repositories.job_repo import JobRepository
+
+            async with async_session_factory() as session:
+                repo = JobRepository(session)
+                await repo.add_run_record(JobRunRecordORM(
+                    run_id=run_id, job_id=job_id, started_at=now, status="running",
+                ))
+                await session.commit()
+
+            await self._persist_job(job)
+            return run_id
 
     async def finish_run(
         self,
@@ -247,60 +254,61 @@ class JobManager:
         summary: Optional[str] = None,
     ) -> Optional[JobInfo]:
         """Record run completion."""
-        job = self._jobs.get(job_id)
-        if not job:
-            return None
-        now = datetime.now(timezone.utc).isoformat()
-        job.last_run_status = status
-        if summary is not None:
-            job.last_run_summary = summary[:2000]
-        job.run_count += 1
-        job.updated_at = now
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            now = datetime.now(timezone.utc).isoformat()
+            job.last_run_status = status
+            if summary is not None:
+                job.last_run_summary = summary[:2000]
+            job.run_count += 1
+            job.updated_at = now
 
-        if status == "success":
-            job.consecutive_failures = 0
-        elif status in ("failed", "timeout"):
-            job.consecutive_failures += 1
-            if job.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                job.enabled = False
-                logger.warning(
-                    f"Job auto-disabled after {job.consecutive_failures} consecutive failures: "
-                    f"{job.name} ({job_id})"
-                )
+            if status == "success":
+                job.consecutive_failures = 0
+            elif status in ("failed", "timeout"):
+                job.consecutive_failures += 1
+                if job.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    job.enabled = False
+                    logger.warning(
+                        f"Job auto-disabled after {job.consecutive_failures} consecutive failures: "
+                        f"{job.name} ({job_id})"
+                    )
 
-        # Update run record in memory
-        for rec in job.run_history:
-            if rec.run_id == run_id:
-                rec.status = status
-                rec.finished_at = now
-                rec.summary = summary[:2000] if summary else None
-                started = datetime.fromisoformat(rec.started_at)
-                finished = datetime.fromisoformat(now)
-                rec.duration_seconds = round((finished - started).total_seconds(), 1)
-                break
+            # Update run record in memory
+            for rec in job.run_history:
+                if rec.run_id == run_id:
+                    rec.status = status
+                    rec.finished_at = now
+                    rec.summary = summary[:2000] if summary else None
+                    started = datetime.fromisoformat(rec.started_at)
+                    finished = datetime.fromisoformat(now)
+                    rec.duration_seconds = round((finished - started).total_seconds(), 1)
+                    break
 
-        if len(job.run_history) > MAX_HISTORY:
-            job.run_history = job.run_history[:MAX_HISTORY]
+            if len(job.run_history) > MAX_HISTORY:
+                job.run_history = job.run_history[:MAX_HISTORY]
 
-        self._jobs[job_id] = job
+            self._jobs[job_id] = job
 
-        # Update run record in DB
-        from core.db.engine import async_session_factory
-        from core.db.models.job import JobRunRecordORM
+            # Update run record in DB
+            from core.db.engine import async_session_factory
+            from core.db.models.job import JobRunRecordORM
 
-        async with async_session_factory() as session:
-            orm_rec = await session.get(JobRunRecordORM, run_id)
-            if orm_rec:
-                orm_rec.status = status
-                orm_rec.finished_at = now
-                orm_rec.summary = summary[:2000] if summary else None
-                started = datetime.fromisoformat(orm_rec.started_at)
-                finished = datetime.fromisoformat(now)
-                orm_rec.duration_seconds = round((finished - started).total_seconds(), 1)
-            await session.commit()
+            async with async_session_factory() as session:
+                orm_rec = await session.get(JobRunRecordORM, run_id)
+                if orm_rec:
+                    orm_rec.status = status
+                    orm_rec.finished_at = now
+                    orm_rec.summary = summary[:2000] if summary else None
+                    started = datetime.fromisoformat(orm_rec.started_at)
+                    finished = datetime.fromisoformat(now)
+                    orm_rec.duration_seconds = round((finished - started).total_seconds(), 1)
+                await session.commit()
 
-        await self._persist_job(job)
-        return job
+            await self._persist_job(job)
+            return job
 
     def get_run_history(self, job_id: str, limit: int = 20) -> List[JobRunRecord]:
         job = self._jobs.get(job_id)
@@ -309,12 +317,13 @@ class JobManager:
         return job.run_history[:limit]
 
     async def set_next_run_at(self, job_id: str, next_run: Optional[str]) -> None:
-        job = self._jobs.get(job_id)
-        if not job:
-            return
-        job.next_run_at = next_run
-        self._jobs[job_id] = job
-        await self._persist_job(job)
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            job.next_run_at = next_run
+            self._jobs[job_id] = job
+            await self._persist_job(job)
 
     # --- LLM 도구 통합 ---
 
@@ -632,8 +641,8 @@ class JobManager:
             from open_agent.core.job_scheduler import job_scheduler
             if job_id in job_scheduler._running_tasks:
                 await job_scheduler.stop_job(job_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"Failed to stop running job {job_id}", exc_info=exc)
 
         await self.delete_job(job_id)
         return f"Scheduled Task '{job_name}' (ID: {job_id})이 삭제되었습니다."
@@ -644,7 +653,8 @@ class JobManager:
         try:
             tools = await mcp_manager.get_tools_for_server(server_name)
             return [t.name for t in tools]
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"Failed to get tool names for server '{server_name}'", exc_info=exc)
             return []
 
     @staticmethod

@@ -32,6 +32,9 @@ Thumbs.db
 .omc/
 .openspec/
 
+# Research cases
+cases/
+
 # Logs
 *.log
 *.lock

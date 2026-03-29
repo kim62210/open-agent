@@ -49,6 +49,7 @@ _WORKFLOW_EXCLUDE: set[str] = set()  # skill-creator도 라우팅 대상에 포�
 
 class SkillManager:
     def __init__(self):
+        self._lock = asyncio.Lock()
         self._skills: Dict[str, SkillInfo] = {}
         self._disabled: set[str] = set()
         self._base_dirs: List[Path] = []
@@ -62,14 +63,15 @@ class SkillManager:
 
     async def load_disabled_from_db(self) -> None:
         """Load disabled skill names from database."""
-        from core.db.engine import async_session_factory
-        from core.db.repositories.skill_config_repo import SkillConfigRepository
+        async with self._lock:
+            from core.db.engine import async_session_factory
+            from core.db.repositories.skill_config_repo import SkillConfigRepository
 
-        async with async_session_factory() as session:
-            repo = SkillConfigRepository(session)
-            disabled_names = await repo.get_disabled_names()
-            self._disabled = set(disabled_names)
-            logger.info(f"Loaded skill config from database ({len(self._disabled)} disabled)")
+            async with async_session_factory() as session:
+                repo = SkillConfigRepository(session)
+                disabled_names = await repo.get_disabled_names()
+                self._disabled = set(disabled_names)
+                logger.info(f"Loaded skill config from database ({len(self._disabled)} disabled)")
 
     async def _save_disabled(self) -> None:
         """Persist disabled state for all skills to database."""
@@ -423,28 +425,30 @@ class SkillManager:
         self.discover_skills([str(d) for d in self._base_dirs])
 
     async def delete_skill(self, name: str) -> bool:
-        skill = self._skills.get(name)
-        if not skill:
-            return False
+        async with self._lock:
+            skill = self._skills.get(name)
+            if not skill:
+                return False
 
-        if skill.is_bundled:
-            raise PermissionDeniedError(f"번들 스킬 '{name}'은(는) 삭제할 수 없습니다.")
+            if skill.is_bundled:
+                raise PermissionDeniedError(f"번들 스킬 '{name}'은(는) 삭제할 수 없습니다.")
 
-        shutil.rmtree(skill.path, ignore_errors=True)
-        self._skills.pop(name, None)
-        self._disabled.discard(name)
+            shutil.rmtree(skill.path, ignore_errors=True)
+            self._skills.pop(name, None)
+            self._disabled.discard(name)
 
-        from core.db.engine import async_session_factory
-        from core.db.repositories.skill_config_repo import SkillConfigRepository
+            from core.db.engine import async_session_factory
+            from core.db.repositories.skill_config_repo import SkillConfigRepository
 
-        async with async_session_factory() as session:
-            repo = SkillConfigRepository(session)
-            await repo.delete_by_id(name)
-            await session.commit()
+            async with async_session_factory() as session:
+                repo = SkillConfigRepository(session)
+                await repo.delete_by_id(name)
+                await session.commit()
 
-        return True
+            return True
 
-    async def toggle_skill(self, name: str, enabled: bool) -> Optional[SkillInfo]:
+    async def _toggle_skill_unlocked(self, name: str, enabled: bool) -> Optional[SkillInfo]:
+        """Internal toggle without acquiring lock (caller must hold self._lock)."""
         skill = self._skills.get(name)
         if not skill:
             return None
@@ -457,62 +461,67 @@ class SkillManager:
         await self._save_disabled()
         return skill
 
+    async def toggle_skill(self, name: str, enabled: bool) -> Optional[SkillInfo]:
+        async with self._lock:
+            return await self._toggle_skill_unlocked(name, enabled)
+
     async def update_skill(self, name: str, description: str | None = None, instructions: str | None = None, enabled: bool | None = None) -> Optional[SkillInfo]:
-        skill = self._skills.get(name)
-        if not skill:
-            return None
+        async with self._lock:
+            skill = self._skills.get(name)
+            if not skill:
+                return None
 
-        if skill.is_bundled and (description is not None or instructions is not None):
-            raise PermissionDeniedError(f"번들 스킬 '{name}'의 설명/지시사항은 수정할 수 없습니다.")
+            if skill.is_bundled and (description is not None or instructions is not None):
+                raise PermissionDeniedError(f"번들 스킬 '{name}'의 설명/지시사항은 수정할 수 없습니다.")
 
-        if enabled is not None:
-            await self.toggle_skill(name, enabled)
+            if enabled is not None:
+                await self._toggle_skill_unlocked(name, enabled)
 
-        if description is not None or instructions is not None:
-            skill_md_path = Path(skill.path) / "SKILL.md"
-            content = skill_md_path.read_text(encoding="utf-8") if skill_md_path.exists() else ""
+            if description is not None or instructions is not None:
+                skill_md_path = Path(skill.path) / "SKILL.md"
+                content = skill_md_path.read_text(encoding="utf-8") if skill_md_path.exists() else ""
 
-            if content.startswith("---"):
-                parts = content.split("---", 2)
-                if len(parts) >= 3:
-                    fm = yaml.safe_load(parts[1]) or {}
-                    if description is not None:
-                        fm["description"] = description
-                        skill.description = description
-                    body = instructions if instructions is not None else parts[2].lstrip("\n")
-                    # Strip frontmatter from instructions if included
-                    if body.startswith("---"):
-                        body_parts = body.split("---", 2)
-                        if len(body_parts) >= 3:
-                            # Merge frontmatter fields from instructions into fm
-                            incoming_fm = yaml.safe_load(body_parts[1]) or {}
-                            for k, v in incoming_fm.items():
-                                if k == "description" and description is not None:
-                                    continue  # explicit description takes priority
-                                if k in ("version", "created_at", "updated_at"):
-                                    continue  # version/date fields are auto-managed
-                                fm[k] = v
-                            if "description" in incoming_fm and description is None:
-                                skill.description = incoming_fm["description"]
-                            body = body_parts[2].lstrip("\n")
-                    # Auto-bump patch version and update timestamp
-                    cur_ver = fm.get("version", "1.0.0")
-                    try:
-                        major, minor, patch = cur_ver.split(".")
-                        fm["version"] = f"{major}.{minor}.{int(patch) + 1}"
-                    except (ValueError, AttributeError):
-                        fm["version"] = "1.0.1"
-                    fm["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    if "created_at" not in fm:
-                        fm["created_at"] = fm["updated_at"]
-                    # Sync version/date to SkillInfo
-                    skill.version = fm["version"]
-                    skill.updated_at = fm["updated_at"]
-                    skill.created_at = fm.get("created_at")
-                    new_content = "---\n" + yaml.dump(_ordered_frontmatter(fm), allow_unicode=True, default_flow_style=False, sort_keys=False) + "---\n\n" + body
-                    skill_md_path.write_text(new_content, encoding="utf-8")
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        fm = yaml.safe_load(parts[1]) or {}
+                        if description is not None:
+                            fm["description"] = description
+                            skill.description = description
+                        body = instructions if instructions is not None else parts[2].lstrip("\n")
+                        # Strip frontmatter from instructions if included
+                        if body.startswith("---"):
+                            body_parts = body.split("---", 2)
+                            if len(body_parts) >= 3:
+                                # Merge frontmatter fields from instructions into fm
+                                incoming_fm = yaml.safe_load(body_parts[1]) or {}
+                                for k, v in incoming_fm.items():
+                                    if k == "description" and description is not None:
+                                        continue  # explicit description takes priority
+                                    if k in ("version", "created_at", "updated_at"):
+                                        continue  # version/date fields are auto-managed
+                                    fm[k] = v
+                                if "description" in incoming_fm and description is None:
+                                    skill.description = incoming_fm["description"]
+                                body = body_parts[2].lstrip("\n")
+                        # Auto-bump patch version and update timestamp
+                        cur_ver = fm.get("version", "1.0.0")
+                        try:
+                            major, minor, patch = cur_ver.split(".")
+                            fm["version"] = f"{major}.{minor}.{int(patch) + 1}"
+                        except (ValueError, AttributeError):
+                            fm["version"] = "1.0.1"
+                        fm["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        if "created_at" not in fm:
+                            fm["created_at"] = fm["updated_at"]
+                        # Sync version/date to SkillInfo
+                        skill.version = fm["version"]
+                        skill.updated_at = fm["updated_at"]
+                        skill.created_at = fm.get("created_at")
+                        new_content = "---\n" + yaml.dump(_ordered_frontmatter(fm), allow_unicode=True, default_flow_style=False, sort_keys=False) + "---\n\n" + body
+                        skill_md_path.write_text(new_content, encoding="utf-8")
 
-        return skill
+            return skill
 
     # --- LLM Integration ---
 

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -30,27 +31,29 @@ IGNORED_FILES = {".DS_Store", "Thumbs.db"}
 
 class WorkspaceManager:
     def __init__(self):
+        self._lock = asyncio.Lock()
         self._workspaces: Dict[str, WorkspaceInfo] = {}
 
     async def load_from_db(self) -> None:
         """Load all workspaces from database into in-memory cache."""
-        from core.db.engine import async_session_factory
-        from core.db.repositories.workspace_repo import WorkspaceRepository
+        async with self._lock:
+            from core.db.engine import async_session_factory
+            from core.db.repositories.workspace_repo import WorkspaceRepository
 
-        async with async_session_factory() as session:
-            repo = WorkspaceRepository(session)
-            rows = await repo.get_all()
-            self._workspaces.clear()
-            for row in rows:
-                self._workspaces[row.id] = WorkspaceInfo(
-                    id=row.id,
-                    name=row.name,
-                    path=row.path,
-                    description=row.description,
-                    created_at=row.created_at,
-                    is_active=row.is_active,
-                )
-            logger.info(f"Loaded {len(self._workspaces)} workspaces from database")
+            async with async_session_factory() as session:
+                repo = WorkspaceRepository(session)
+                rows = await repo.get_all()
+                self._workspaces.clear()
+                for row in rows:
+                    self._workspaces[row.id] = WorkspaceInfo(
+                        id=row.id,
+                        name=row.name,
+                        path=row.path,
+                        description=row.description,
+                        created_at=row.created_at,
+                        is_active=row.is_active,
+                    )
+                logger.info(f"Loaded {len(self._workspaces)} workspaces from database")
 
     async def _persist_workspace(self, ws: WorkspaceInfo) -> None:
         """Write a single workspace to database."""
@@ -72,23 +75,24 @@ class WorkspaceManager:
     # --- CRUD ---
 
     async def create_workspace(self, name: str, path: str, description: str = "") -> WorkspaceInfo:
-        abs_path = Path(path).expanduser().resolve()
-        if not abs_path.is_dir():
-            raise NotFoundError(f"Directory not found: {path}")
+        async with self._lock:
+            abs_path = Path(path).expanduser().resolve()
+            if not abs_path.is_dir():
+                raise NotFoundError(f"Directory not found: {path}")
 
-        wid = uuid.uuid4().hex[:8]
-        workspace = WorkspaceInfo(
-            id=wid,
-            name=name,
-            path=str(abs_path),
-            description=description,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            is_active=False,
-        )
-        self._workspaces[wid] = workspace
-        await self._persist_workspace(workspace)
-        logger.info(f"Created workspace: {name} ({abs_path})")
-        return workspace
+            wid = uuid.uuid4().hex[:8]
+            workspace = WorkspaceInfo(
+                id=wid,
+                name=name,
+                path=str(abs_path),
+                description=description,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                is_active=False,
+            )
+            self._workspaces[wid] = workspace
+            await self._persist_workspace(workspace)
+            logger.info(f"Created workspace: {name} ({abs_path})")
+            return workspace
 
     def get_all(self) -> List[WorkspaceInfo]:
         return list(self._workspaces.values())
@@ -99,66 +103,70 @@ class WorkspaceManager:
     async def update_workspace(
         self, workspace_id: str, name: Optional[str] = None, description: Optional[str] = None
     ) -> Optional[WorkspaceInfo]:
-        ws = self._workspaces.get(workspace_id)
-        if not ws:
-            return None
-        if name is not None:
-            ws.name = name
-        if description is not None:
-            ws.description = description
-        self._workspaces[workspace_id] = ws
-        await self._persist_workspace(ws)
-        return ws
+        async with self._lock:
+            ws = self._workspaces.get(workspace_id)
+            if not ws:
+                return None
+            if name is not None:
+                ws.name = name
+            if description is not None:
+                ws.description = description
+            self._workspaces[workspace_id] = ws
+            await self._persist_workspace(ws)
+            return ws
 
     async def delete_workspace(self, workspace_id: str) -> bool:
-        if workspace_id not in self._workspaces:
-            return False
+        async with self._lock:
+            if workspace_id not in self._workspaces:
+                return False
 
-        from core.db.engine import async_session_factory
-        from core.db.repositories.workspace_repo import WorkspaceRepository
+            from core.db.engine import async_session_factory
+            from core.db.repositories.workspace_repo import WorkspaceRepository
 
-        async with async_session_factory() as session:
-            repo = WorkspaceRepository(session)
-            await repo.delete_by_id(workspace_id)
-            await session.commit()
+            async with async_session_factory() as session:
+                repo = WorkspaceRepository(session)
+                await repo.delete_by_id(workspace_id)
+                await session.commit()
 
-        self._workspaces.pop(workspace_id)
-        logger.info(f"Deleted workspace: {workspace_id}")
-        return True
+            self._workspaces.pop(workspace_id)
+            logger.info(f"Deleted workspace: {workspace_id}")
+            return True
 
     async def set_active(self, workspace_id: str) -> Optional[WorkspaceInfo]:
-        ws = self._workspaces.get(workspace_id)
-        if not ws:
-            return None
+        async with self._lock:
+            ws = self._workspaces.get(workspace_id)
+            if not ws:
+                return None
 
-        from core.db.engine import async_session_factory
-        from core.db.repositories.workspace_repo import WorkspaceRepository
+            from core.db.engine import async_session_factory
+            from core.db.repositories.workspace_repo import WorkspaceRepository
 
-        for w in self._workspaces.values():
-            w.is_active = False
-        ws.is_active = True
+            for w in self._workspaces.values():
+                w.is_active = False
+            ws.is_active = True
 
-        async with async_session_factory() as session:
-            repo = WorkspaceRepository(session)
-            await repo.set_active(workspace_id)
-            await session.commit()
+            async with async_session_factory() as session:
+                repo = WorkspaceRepository(session)
+                await repo.set_active(workspace_id)
+                await session.commit()
 
-        logger.info(f"Activated workspace: {ws.name}")
-        return ws
+            logger.info(f"Activated workspace: {ws.name}")
+            return ws
 
     async def deactivate(self) -> None:
-        from core.db.engine import async_session_factory
-        from sqlalchemy import update
-        from core.db.models.workspace import WorkspaceORM
+        async with self._lock:
+            from core.db.engine import async_session_factory
+            from sqlalchemy import update
+            from core.db.models.workspace import WorkspaceORM
 
-        for w in self._workspaces.values():
-            w.is_active = False
+            for w in self._workspaces.values():
+                w.is_active = False
 
-        async with async_session_factory() as session:
-            await session.execute(update(WorkspaceORM).values(is_active=False))
-            await session.commit()
+            async with async_session_factory() as session:
+                await session.execute(update(WorkspaceORM).values(is_active=False))
+                await session.commit()
 
-        logger.info("All workspaces deactivated")
+            logger.info("All workspaces deactivated")
 
     def get_active(self) -> Optional[WorkspaceInfo]:
         for w in self._workspaces.values():

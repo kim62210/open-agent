@@ -67,8 +67,8 @@ async def lifespan(app: FastAPI):
             if token:
                 os.environ["GITHUB_TOKEN"] = token
                 logger.info("GITHUB_TOKEN auto-configured from gh CLI")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to auto-configure GITHUB_TOKEN", exc_info=exc)
 
     # Initialize database
     from core.db.engine import init_db
@@ -237,8 +237,8 @@ async def host_info():
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.connect(("8.8.8.8", 80))
                 result["lan_ip"] = s.getsockname()[0]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to detect LAN IP for host-info", exc_info=exc)
     return result
 
 

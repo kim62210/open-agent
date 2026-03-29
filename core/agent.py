@@ -213,16 +213,15 @@ ERROR_HANDLING_PROMPT = """## 도구 오류 대응 원칙
 
 @dataclass
 class _RequestState:
-    """Per-request mutable state — 싱글톤 경합 조건 방지."""
+    """Per-request mutable state — prevents singleton race conditions."""
     session_tools: set = field(default_factory=set)
     tool_result_cache: dict = field(default_factory=dict)
+    prev_workflow: str | None = None
 
 
 class AgentOrchestrator:
     def __init__(self):
         self.llm = llm_client
-        # 이전 요청에서 활성화된 워크플로우 (대화 맥락 라우팅용)
-        self._prev_workflow: str | None = None
 
     @staticmethod
     def _build_workflow_resources_section(skill_name, scripts, references):
@@ -674,7 +673,8 @@ class AgentOrchestrator:
             if usage_ratio < compact_threshold * 0.5:
                 return high_limit
             return base_limit
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to compute dynamic tool result limit", exc_info=exc)
             return 30_000
 
     def _process_tool_result(self, result: str, max_chars: int = 30_000) -> tuple[str, bool]:
@@ -848,13 +848,13 @@ class AgentOrchestrator:
             routed_name = await workflow_router.route(
                 last_user_msg,
                 messages=messages,
-                prev_workflow=self._prev_workflow,
+                prev_workflow=state.prev_workflow,
             )
             if routed_name:
                 workflow_match = skill_manager.get_workflow_body(routed_name)
 
-        # 이전 워크플로우 갱신
-        self._prev_workflow = workflow_match["name"] if workflow_match else None
+        # Update previous workflow in per-request state
+        state.prev_workflow = workflow_match["name"] if workflow_match else None
 
         system_prompt = self._build_system_prompt(
             user_input=last_user_msg, workflow_match=workflow_match,
@@ -1002,13 +1002,13 @@ class AgentOrchestrator:
             routed_name = await workflow_router.route(
                 last_user_msg,
                 messages=messages,
-                prev_workflow=self._prev_workflow,
+                prev_workflow=state.prev_workflow,
             )
             if routed_name:
                 workflow_match = skill_manager.get_workflow_body(routed_name)
 
-        # 이전 워크플로우 갱신
-        self._prev_workflow = workflow_match["name"] if workflow_match else None
+        # Update previous workflow in per-request state
+        state.prev_workflow = workflow_match["name"] if workflow_match else None
 
         system_prompt = self._build_system_prompt(
             user_input=last_user_msg, workflow_match=workflow_match,
