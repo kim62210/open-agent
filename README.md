@@ -41,7 +41,7 @@
 - **Structured Logging** — [structlog](https://www.structlog.org/) with request correlation IDs and dev/prod format auto-switching
 - **Web UI** — Built-in Next.js frontend served as static export
 - **Rust-Accelerated** — Native Rust extensions for grep, fuzzy matching, and sandboxing with Python fallback
-- **SSE Streaming** — Real-time streaming of agent reasoning, tool calls, and responses
+- **SSE Streaming** — Token-level streaming of agent reasoning, tool calls, and responses with `content_delta` events for real-time delivery
 - **Rate Limiting** — Configurable per-endpoint rate limits via [slowapi](https://github.com/laurentS/slowapi)
 
 ## Quickstart
@@ -138,7 +138,7 @@ open-agent/
 ├── config.py                   # ~/.open-agent/ data directory management
 │
 ├── core/                       # Business logic layer
-│   ├── agent.py                # AgentOrchestrator — ReAct loop, tool routing, SSE streaming
+│   ├── agent.py                # AgentOrchestrator — ReAct loop, tool routing, token-level SSE streaming
 │   ├── llm.py                  # LLMClient — LiteLLM wrapper, API key resolution
 │   ├── exceptions.py           # OpenAgentError hierarchy (18 domain exception classes)
 │   ├── logging.py              # structlog setup (dev console / prod JSON auto-switch)
