@@ -252,7 +252,8 @@ open-agent/
 | **Concurrency Safety** | `core/*_manager.py` | `asyncio.Lock` on all mutation paths in singleton managers |
 | **Deferred Tool Loading** | `core/tool_registry.py` | Tools loaded on-demand via `find_tools` to save LLM context |
 | **3-Tier Fallback** | `core/grep_engine.py` | Rust native → subprocess (ripgrep) → pure Python |
-| **ReAct Loop** | `core/agent.py` | Reason + Act loop with configurable max rounds |
+| **ReAct Loop** | `core/agent.py` | Unified `_run_core()` generator — `run()` and `run_stream()` share a single code path |
+| **Adaptive Reasoning** | `core/agent.py` | 3-tier reasoning effort (low/medium/high) based on request complexity and workflow type |
 | **L1/L2 Memory** | `core/memory_manager.py` | L1: long-term facts, L2: session summaries with LLM compression |
 | **Dual Authentication** | `core/auth/dependencies.py` | JWT Bearer token or `X-API-Key` header — both paths validate user |
 | **Role-Based Access** | `core/auth/dependencies.py` | `RoleChecker` class with pre-built `require_admin`, `require_user`, `require_any` |
