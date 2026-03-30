@@ -154,3 +154,76 @@ class TestAPIKey:
         key_result = await auth_service.create_api_key(user1["id"], "u1-key")
         with pytest.raises(PermissionDeniedError):
             await auth_service.revoke_api_key(key_result["id"], "different-user-id")
+
+    async def test_revoke_api_key_not_found(self, auth_service):
+        """Revoking nonexistent API key raises NotFoundError."""
+        from core.exceptions import NotFoundError
+        user = await auth_service.register("rnf@test.com", "rnfuser", "password123")
+        with pytest.raises(NotFoundError):
+            await auth_service.revoke_api_key("nonexistent-key", user["id"])
+
+
+class TestRevokeRefreshToken:
+    """AuthService.revoke_refresh_token()"""
+
+    async def test_revoke_refresh_token_success(self, auth_service):
+        """Revoking a valid refresh token marks it as revoked."""
+        await auth_service.register("rev@test.com", "revuser", "password123")
+        login_result = await auth_service.login("rev@test.com", "password123")
+        # Get token_id from the refresh token payload
+        from core.auth.jwt import decode_token
+        payload = decode_token(login_result["refresh_token"])
+        token_id = payload["token_id"]
+        await auth_service.revoke_refresh_token(token_id)
+        # Verify it's revoked
+        token_orm = await auth_service.token_repo.get_by_id(token_id)
+        assert token_orm.is_revoked is True
+
+    async def test_revoke_refresh_token_not_found(self, auth_service):
+        """Revoking nonexistent refresh token raises NotFoundError."""
+        from core.exceptions import NotFoundError
+        with pytest.raises(NotFoundError):
+            await auth_service.revoke_refresh_token("nonexistent-token-id")
+
+    async def test_refresh_with_revoked_token_fails(self, auth_service):
+        """Using a revoked refresh token raises PermissionDeniedError."""
+        from core.exceptions import PermissionDeniedError
+        from core.auth.jwt import decode_token
+        await auth_service.register("revfail@test.com", "revfailuser", "password123")
+        login_result = await auth_service.login("revfail@test.com", "password123")
+        payload = decode_token(login_result["refresh_token"])
+        await auth_service.revoke_refresh_token(payload["token_id"])
+        with pytest.raises(PermissionDeniedError):
+            await auth_service.refresh_token(login_result["refresh_token"])
+
+    async def test_refresh_with_access_token_type_fails(self, auth_service):
+        """Using an access token for refresh raises PermissionDeniedError."""
+        from core.exceptions import PermissionDeniedError
+        from core.auth.jwt import create_access_token
+        access_token = create_access_token(data={"sub": "test", "role": "user"})
+        with pytest.raises(PermissionDeniedError):
+            await auth_service.refresh_token(access_token)
+
+    async def test_refresh_with_inactive_user(self, auth_service):
+        """Refresh fails for deactivated user."""
+        from core.exceptions import PermissionDeniedError
+        await auth_service.register("deactr@test.com", "deactruser", "password123")
+        login_result = await auth_service.login("deactr@test.com", "password123")
+        # Deactivate user
+        user = await auth_service.user_repo.get_by_email("deactr@test.com")
+        user.is_active = False
+        await auth_service.session.commit()
+        with pytest.raises(PermissionDeniedError):
+            await auth_service.refresh_token(login_result["refresh_token"])
+
+
+class TestRegistrationDisabled:
+    """AuthService.register() when registration is disabled."""
+
+    async def test_registration_disabled(self, auth_service):
+        """Registration raises PermissionDeniedError when disabled."""
+        from core.exceptions import PermissionDeniedError
+        with patch("core.auth.service.auth_settings") as mock_settings:
+            mock_settings.registration_enabled = False
+            with pytest.raises(PermissionDeniedError, match="disabled"):
+                await auth_service.register("new@test.com", "newuser", "password123")
