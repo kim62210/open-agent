@@ -1,146 +1,91 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project targets [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+> Historical entries before formal release tagging were reconstructed from commit history, package metadata, and repository documentation. The repository currently does not publish a complete version tag history for every milestone.
 
 ## [Unreleased]
 
-### Planned
-- Docker containerization and docker-compose for local development
-- CI/CD pipeline (GitHub Actions: lint, test, build)
-- Observability (metrics, distributed tracing)
+### Added
+- Ownership-aware persistence across sessions, memories, jobs, workspaces, and pages via `owner_user_id` columns and repository/manager filtering.
+- Run ledger persistence with `RunORM` and `RunEventORM`, plus `/api/runs` endpoints for run inspection.
+- Asynchronous run controls:
+  - `POST /api/chat/async`
+  - `GET /api/runs/{run_id}/status`
+  - `POST /api/runs/{run_id}/abort`
+- Task supervision infrastructure in `core/task_supervisor.py` for tracked background tasks.
+- Readiness reporting via `GET /api/settings/readiness`.
 
----
-
-## [0.8.7] - 2026-03-29
-
-### Added — P0 Critical Fixes
-- **Alembic migration framework** — async-compatible `env.py` with `_build_database_url()` integration, standard migration template, and `versions/` directory for schema evolution
-- **asyncio.Lock on all 7 manager singletons** — prevents data corruption under concurrent requests (session, settings, workspace, job, mcp, skill, page managers)
-- Deadlock-safe internal method extraction (`_*_unlocked` pattern) for managers with self-referencing calls
+### Changed
+- MCP and sandbox mutation endpoints now require stricter admin access.
+- MCP server configuration responses redact sensitive header and environment values.
+- Chat requests now persist run lifecycle events before and after execution.
+- Startup behavior now treats `gh auth token` auto-import as a development-only convenience.
 
 ### Fixed
-- **`_prev_workflow` race condition** — moved from singleton instance attribute to `_RequestState` dataclass, isolating workflow routing per request
-- **13 silent `except Exception:` blocks** — added proper logging (`logger.debug` for expected failures, `logger.warning` for unexpected) across 10 files: server.py, agent.py, llm.py, sandbox.py, job_scheduler.py, job_manager.py, mcp_manager.py, page_manager.py
+- Refresh token rotation now revokes the old token and issues a new refresh token on refresh.
+- Auth dependencies populate `request.state.user` for downstream request context.
+- JSON-to-DB migration no longer writes the `.migrated` marker when import steps fail.
+- Background session-summary and job-scheduler tasks are now tracked instead of being fire-and-forget.
 
-### Dependencies
-- Added `alembic>=1.14.0`
+### Security
+- Added risk-based approval primitives for MCP allowlists and tool gating.
+- Tightened resource ownership boundaries to prevent cross-user access to persisted records.
 
----
+### Operations
+- `init_db()` now gates `create_all()` behind development/bootstrap flags instead of always executing schema creation in production-style startup paths.
 
 ## [0.8.6] - 2026-03-29
 
-### Added — Sprint 3: Authentication & Authorization
-- **JWT authentication** with access tokens (30min) and refresh tokens (7 days) with automatic rotation
-- **API key authentication** via `X-API-Key` header for programmatic access (SHA-256 hashed storage)
-- **Role-based access control (RBAC)** with three roles: `admin`, `user`, `viewer`
-- **Rate limiting** via slowapi — register/login: 5/min, chat: 20/min, stream: 10/min
-- **Auth API endpoints** (11 routes): register, login, refresh, logout, profile, API key CRUD, admin user management
-- **Password hashing** with Argon2 via pwdlib
-- **Auto-admin**: first registered user automatically receives `admin` role
-- **JWT secret auto-generation**: persisted to `~/.open-agent/.jwt_secret` if not set via env
-- All existing endpoints now require authentication with appropriate role checks
-- Health check and version endpoints remain public
-- 28 new auth tests: JWT (8), password (5), auth API (15)
-- Dependencies: `PyJWT[crypto]>=2.9.0`, `pwdlib[argon2]>=0.2.0`, `slowapi>=0.1.9`
-
-### Added — New ORM Models
-- `UserORM` — user accounts with email, username, password hash, role, active status
-- `APIKeyORM` — API keys with SHA-256 hash, prefix, name, last_used tracking
-- `RefreshTokenORM` — refresh tokens with user association and revocation support
-
-### Added — New Repositories
-- `UserRepository` — user CRUD with email lookup
-- `APIKeyRepository` — API key CRUD with hash-based lookup
-- `RefreshTokenRepository` — token CRUD with cleanup
+### Added
+- JWT authentication, API key authentication, refresh tokens, and role-based access control for browser and programmatic clients.
+- Async SQLAlchemy persistence with SQLite as the default database and PostgreSQL override support via `DATABASE_URL`.
+- JSON-to-database migration support for legacy installs.
+- Structured logging via `structlog`, request correlation IDs, and a FastAPI request logging middleware.
+- Pydantic v2 model strengthening across auth, sessions, memory, jobs, pages, settings, and MCP models.
+- Public health and version endpoints under `/api/settings`.
 
 ### Changed
-- All API endpoints now require JWT or API key authentication
-- `chat.py`: renamed `request` parameter to `body` for slowapi compatibility
-- `conftest.py`: added `test_user`, `auth_headers`, `auth_client` fixtures; existing tests use `dependency_overrides` to bypass auth
+- Core managers moved from JSON-file persistence to async repositories backed by SQLAlchemy models.
+- The FastAPI lifespan now initializes the database, migrates legacy JSON state, loads managers from persistence, and starts the scheduler.
+- The project standardized on `pyproject.toml`, dependency groups, `ruff`, `pytest`, and `mypy` as the primary development workflow.
 
----
+### Fixed
+- Request-state isolation for workflow routing and other mutable per-request runtime state.
+- Silent exception swallowing in several core modules through improved logging and exception handling.
+- Concurrency hazards in singleton managers through `asyncio.Lock`-guarded mutation paths.
 
 ## [0.8.5] - 2026-03-29
 
-### Added — Sprint 2: Database Layer
-- **Async SQLAlchemy 2.0** with `aiosqlite` backend (zero-config SQLite default)
-- **PostgreSQL support** via `DATABASE_URL` environment variable override
-- **SQLite WAL mode** with busy_timeout=5000 for concurrent read/write
-- **12 ORM models** mapping all existing Pydantic schemas to database tables
-- **Generic `BaseRepository[T]`** with `get_by_id`, `get_all`, `create`, `update`, `delete_by_id`
-- **8 domain repositories**: session, memory, settings, job, workspace, page, skill_config, mcp_config
-- **JSON → DB migration utility** (`core/db/migrate.py`): one-time, idempotent migration with `.migrated` marker
-- Per-file error isolation during migration — individual failures don't block others
-- Dependencies: `sqlalchemy[asyncio]>=2.0.36`, `aiosqlite>=0.20.0`
+### Added
+- Async SQLAlchemy repository layer.
+- SQLite WAL mode support and PostgreSQL URL translation.
+- Domain repositories for sessions, memory, settings, jobs, workspaces, pages, skills, MCP configuration, and users.
 
 ### Changed
-- All 8 managers migrated from JSON file I/O to async database repositories
-- `settings_manager`: single-row `SettingsORM` with in-memory cache
-- `session_manager`: `SessionORM` + `SessionMessageORM`, removed `sessions/` file I/O
-- `memory_manager`: `MemoryORM` + `SessionSummaryORM`, LLM logic unchanged
-- `workspace_manager`: metadata to DB, filesystem operations unchanged
-- `mcp_manager`: config to DB, runtime connections stay in-memory
-- `job_manager`: `JobORM` + `JobRunRecordORM`
-- `page_manager`: metadata to DB, HTML file operations unchanged
-- `skill_manager`: disabled list to DB, filesystem discovery unchanged
-- All API endpoints updated for `await` on async manager methods
-- `server.py` lifespan: added `init_db()` / `close_db()` calls, JSON migration
-- `conftest.py`: rewritten for in-memory SQLite backend (no JSON files)
-
----
+- Managers now persist state to the database rather than directly to JSON files.
 
 ## [0.8.4] - 2026-03-29
 
-### Added — Sprint 1: Foundation
-- **`pyproject.toml`** with hatchling build system and PEP 735 dependency-groups
-- 13 runtime dependencies declared (fastapi, litellm, mcp, structlog, etc.)
-- Separate dependency groups: `dev`, `lint` (ruff, mypy), `test` (pytest, pytest-asyncio, pytest-cov)
-- **Structured logging** via structlog: dev mode (colored console), prod mode (JSON)
-- `core/logging.py`: `setup_logging()` with environment-based format auto-switching
-- `api/middleware.py`: `RequestLoggingMiddleware` with UUID `request_id` and `X-Request-ID` header
-- **Custom exception hierarchy** in `core/exceptions.py`: 18 domain exception classes under `OpenAgentError`
-- 12 global exception handlers in `server.py` mapping exceptions to HTTP status codes
-- **Pydantic V2 type strengthening** across all models:
-  - `OpenAgentBase` shared base class with `ConfigDict(from_attributes=True, use_enum_values=True)`
-  - `ErrorResponse` standard error schema
-  - `JobRunStatus`, `JobScheduleType` enums in `job.py`
-  - `MessageRole` enum in `session.py`
-  - `MCPTransport` enum in `mcp.py`
-  - `Literal` types for `reasoning_effort`, `theme.mode` in `settings.py`
-- **Test framework** with 50 tests:
-  - `tests/unit/test_session_manager.py` (16 tests)
-  - `tests/unit/test_memory_manager.py` (22 tests)
-  - `tests/integration/test_sessions_api.py` (12 tests)
-  - `conftest.py` with 5 isolated fixtures
+### Added
+- `pyproject.toml` packaging and dependency-group setup.
+- Structured logging and request logging middleware.
+- Initial test and coverage configuration.
+- Domain-specific exception hierarchy under `OpenAgentError`.
 
 ### Changed
-- Replaced 36 `ValueError` raises with domain-specific exceptions across 8 core modules
-- Removed unnecessary `try/except` blocks in 4 API endpoint files
-- Added exception chaining (`from e`) to all re-raises
-
----
+- Error handling paths were normalized across the API and core runtime.
 
 ## [0.8.0] - 2026-03-29
 
-### Added — Initial Release
-- FastAPI async backend with SSE streaming
-- Multi-LLM support via LiteLLM (OpenAI, Anthropic, Google, 100+ providers)
-- MCP integration (stdio, SSE, streamable-http transports)
-- Agent skill system using SKILL.md standard (YAML frontmatter + Markdown)
-- Persistent memory (L1 long-term + L2 session summaries)
-- Workspace tools (file read/write/edit, regex search, sandboxed shell)
-- Cron-based job scheduler with agent execution
-- Pre-built Next.js web UI served as static export
-- Rust native extensions for grep, fuzzy matching, sandboxing (with Python fallback)
-- OS-native sandboxing (macOS Seatbelt, Linux bwrap)
-- Click CLI entrypoint (`open-agent start`)
-- 8 bundled skills: implementation, test, plan, debug, review, find, coding-pipeline, skill-creator
+### Added
+- Initial FastAPI server and static web application serving.
+- LiteLLM-backed multi-provider LLM support.
+- MCP integration for stdio, SSE, and streamable HTTP servers.
+- SKILL.md-based skill discovery and execution.
+- Persistent session and memory concepts.
+- Workspace tools, hosted pages, and scheduled jobs.
 
-[Unreleased]: https://github.com/kim62210/open-agent/compare/v0.8.6...HEAD
-[0.8.6]: https://github.com/kim62210/open-agent/compare/v0.8.5...v0.8.6
-[0.8.5]: https://github.com/kim62210/open-agent/compare/v0.8.4...v0.8.5
-[0.8.4]: https://github.com/kim62210/open-agent/compare/v0.8.0...v0.8.4
-[0.8.0]: https://github.com/kim62210/open-agent/releases/tag/v0.8.0
+> Release comparison links are intentionally omitted until the repository adopts a stable public tag history.
