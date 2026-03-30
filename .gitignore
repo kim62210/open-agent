@@ -31,6 +31,15 @@ Thumbs.db
 # Development artifacts
 .omc/
 .openspec/
+openspec/
+.worktrees/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Documentation build
+docs/
 
 # Research cases
 cases/
