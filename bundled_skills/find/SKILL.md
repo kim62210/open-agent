@@ -1,11 +1,12 @@
 ---
 name: find
 description: >
-  코드베이스 및 문서 탐색·분석을 위한 읽기 전용 워크플로우.
-  사용자가 코드나 문서를 찾거나, 프로젝트 구조를 파악하거나, 특정 구현이나 설정을 이해하려 할 때 사용합니다.
-  "이 함수 어디 있어?", "이 기능 어떻게 구현돼 있어?", "코드 구조 알려줘",
-  "이거 어디서 호출돼?", "관련 파일 찾아줘", "사용처 찾아줘",
-  "문서 어디 있어?", "설정 파일 찾아줘" 등의 요청에 트리거됩니다.
+  Read-only workflow for codebase and documentation exploration and analysis.
+  Used when the user wants to find code or documents, understand project structure,
+  or comprehend specific implementations or configurations.
+  Triggered by requests like "where is this function?", "how is this feature implemented?",
+  "show me the code structure", "where is this called?", "find related files",
+  "find usage sites", "where is the documentation?", "find the config file", etc.
 allowed-tools:
   - search
   - read_file
@@ -15,37 +16,37 @@ allowed-tools:
 
 # Find
 
-코드베이스 탐색을 위한 4단계 읽기 전용 워크플로우.
+A 4-step read-only workflow for codebase exploration.
 
-**이 스킬은 읽기 전용이다. 코드를 수정하지 말 것.**
+**This skill is read-only. Do not modify any code.**
 
-탐색 대상이 **스킬**인 경우: `read_skill`로 스킬 내용/스크립트 확인, `read_skill_reference`로 참조 문서 탐색. 워크스페이스 도구(read_file, search, list_files)로는 스킬 디렉토리에 접근 불가.
+If the exploration target is a **skill**: check skill content/scripts with `read_skill`, explore reference documents with `read_skill_reference`. Skill directories cannot be accessed via workspace tools (read_file, search, list_files).
 
-## 1단계: 구조 파악
+## Step 1: Understand Structure
 
-1. `list_files`로 프로젝트 전체 구조를 파악할 것
-2. `list_files`으로 관련 파일 패턴을 찾을 것
-3. 프로젝트의 언어, 프레임워크, 디렉토리 구조를 파악할 것
+1. Use `list_files` to understand the overall project structure
+2. Use `list_files` to find related file patterns
+3. Identify the project's language, framework, and directory structure
 
-## 2단계: 검색
+## Step 2: Search
 
-1. `search`으로 키워드, 함수명, 클래스명, 변수명을 검색할 것
-2. 검색 전략:
-   - 정확한 이름으로 먼저 검색
-   - 결과가 없으면 부분 문자열, 정규식으로 확장
-   - 관련 임포트문, 타입 정의도 검색
-3. `list_files`으로 파일명 패턴으로 검색할 것
+1. Use `search` to look for keywords, function names, class names, and variable names
+2. Search strategy:
+   - Search by exact name first
+   - If no results, expand to substrings and regex
+   - Also search for related imports and type definitions
+3. Use `list_files` to search by filename patterns
 
-## 3단계: 심층 분석
+## Step 3: Deep Analysis
 
-1. `read_file`로 관련 파일의 내용을 읽을 것
-2. 호출 체인을 추적할 것: 호출자 → 대상 함수 → 호출되는 함수
-3. 데이터 흐름을 파악할 것: 입력 → 변환 → 출력
-4. 의존성 관계를 파악할 것
+1. Use `read_file` to read the content of related files
+2. Trace the call chain: caller -> target function -> called functions
+3. Map the data flow: input -> transformation -> output
+4. Identify dependency relationships
 
-## 4단계: 종합
+## Step 4: Synthesize
 
-1. 발견한 내용을 구조적으로 정리할 것
-2. 핵심 파일과 함수 목록을 제공할 것 (파일 경로 + 라인 번호)
-3. 코드의 동작 원리를 명확하게 설명할 것
-4. 관련된 추가 탐색 방향이 있으면 제안할 것
+1. Organize findings in a structured format
+2. Provide a list of key files and functions (file path + line number)
+3. Clearly explain how the code works
+4. Suggest additional exploration directions if relevant

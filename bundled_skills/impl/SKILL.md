@@ -1,13 +1,13 @@
 ---
 name: impl
 description: >
-  새 기능 구현 및 문서 작성/편집을 위한 체계적 워크플로우.
-  사용자가 새 기능을 추가하거나, 기존 기능을 확장하거나, 코드나 문서를 작성해달라고 요청할 때 사용합니다.
-  코드 작성뿐 아니라 README, 가이드, 설정 파일, 마크다운 문서의 생성·수정·편집도 포함합니다.
-  "이 기능 만들어줘", "추가해줘", "구현해줘", "개발해줘",
-  "문서 작성해줘", "README 수정해줘", "가이드 만들어줘",
-  "~하는 코드 작성해줘", "API 엔드포인트 만들어줘" 등의 요청에 트리거됩니다.
-  3개 이상 파일을 수정해야 하는 복잡한 작업은 coding-pipeline 스킬을 대신 사용할 것.
+  Systematic workflow for implementing new features and writing/editing documentation.
+  Used when the user asks to add new features, extend existing features, or write code and documents.
+  Covers not only code writing but also creating/modifying/editing READMEs, guides, config files, and markdown documents.
+  Triggered by requests like "build this feature", "add this", "implement this",
+  "write documentation", "update the README", "create a guide",
+  "write code that does X", "create an API endpoint", etc.
+  For complex tasks requiring changes to 3 or more files, use the coding-pipeline skill instead.
 allowed-tools:
   - search
   - read_file
@@ -20,73 +20,73 @@ allowed-tools:
 
 # Impl
 
-기능 구현을 위한 6단계 워크플로우.
+A 6-step workflow for feature implementation.
 
-**핵심 규칙: 기존 코드 스타일과 패턴을 반드시 따를 것.**
+**Core rule: Always follow existing code style and patterns.**
 
-## 1단계: 요구사항 파악
+## Step 1: Understand Requirements
 
-1. 사용자 요청을 구체적 요구사항으로 분해할 것
-2. 불명확한 부분은 구현 전에 사용자에게 질문할 것
-3. 입력, 출력, 엣지 케이스를 정의할 것
+1. Break down the user's request into specific requirements
+2. Ask the user about unclear points before implementation
+3. Define inputs, outputs, and edge cases
 
-## 2단계: 기존 패턴 조사
+## Step 2: Research Existing Patterns
 
-1. `search`과 `list_files`으로 유사한 기존 구현을 찾을 것
-2. `read_file`로 기존 코드의 패턴을 분석할 것:
-   - 네이밍 컨벤션 (camelCase, snake_case 등)
-   - 파일/디렉토리 구조
-   - 임포트 스타일
-   - 에러 처리 방식
-   - 타입 정의 방식
-3. `list_files`로 디렉토리 구조를 파악할 것
-4. 기존 패턴을 벗어나는 구현은 하지 말 것
+1. Use `search` and `list_files` to find similar existing implementations
+2. Use `read_file` to analyze patterns in existing code:
+   - Naming conventions (camelCase, snake_case, etc.)
+   - File/directory structure
+   - Import style
+   - Error handling approach
+   - Type definition approach
+3. Use `list_files` to understand directory structure
+4. Do not deviate from existing patterns
 
-## 3단계: 변경 계획
+## Step 3: Plan Changes
 
-1. 수정/생성할 파일 목록을 작성할 것
-2. 각 파일의 변경 내용을 요약할 것
-3. 변경 순서를 결정할 것 (의존성 순서)
-4. 사용자에게 계획을 보고하고 확인을 받을 것
+1. List files to modify/create
+2. Summarize changes for each file
+3. Determine change order (dependency order)
+4. Report the plan to the user and get confirmation
 
-## 4단계: 구현
+## Step 4: Implement
 
-1. 계획된 순서대로 코드를 작성/수정할 것
-2. `edit_file`로 기존 파일을 수정할 것
-3. `write_file`로 새 파일을 생성할 것
-4. 각 파일 수정 후 구문 오류가 없는지 확인할 것
-5. 기존 코드 스타일을 정확히 따를 것
+1. Write/modify code in the planned order
+2. Use `edit_file` to modify existing files
+3. Use `write_file` to create new files
+4. Verify no syntax errors after each file modification
+5. Follow existing code style exactly
 
-## 5단계: 테스트
+## Step 5: Test
 
-1. `bash`로 빌드/컴파일 오류를 확인할 것
-2. 기존 테스트가 있으면 실행할 것
-3. 새로 추가한 기능을 수동으로 검증할 것
+1. Use `bash` to check for build/compile errors
+2. Run existing tests if available
+3. Manually verify newly added functionality
 
-## 6단계: 검증 및 보고
+## Step 6: Verify and Report
 
-1. 변경 사항을 전체적으로 리뷰할 것
-2. 불필요한 코드, 디버깅 코드가 남아있지 않은지 확인할 것
-3. 변경 내용을 사용자에게 요약 보고할 것
+1. Review the overall changes
+2. Ensure no unnecessary or debug code remains
+3. Summarize changes and report to the user
 
-## 완료 후 자동 전환
+## Auto-Transition After Completion
 
-구현이 완료되면 사용자 확인 없이 자동으로 다음 단계를 진행할 것:
+After implementation is complete, automatically proceed to the next steps without user confirmation:
 
-1. **테스트 자동 진행**: 새 기능을 추가했고 관련 테스트가 없으면, `read_skill("test")`로 테스트 워크플로우를 로드하고 즉시 테스트를 작성할 것
-2. **리뷰 자동 진행**: 테스트 완료 후 (또는 테스트 불필요 시), `read_skill("review")`로 리뷰 워크플로우를 로드하고 변경사항을 자체 리뷰할 것
-3. **최종 보고**: 리뷰까지 완료한 뒤 전체 결과를 사용자에게 보고할 것
+1. **Auto-test**: If a new feature was added and no related tests exist, load the test workflow with `read_skill("test")` and write tests immediately
+2. **Auto-review**: After testing is complete (or if tests are unnecessary), load the review workflow with `read_skill("review")` and self-review the changes
+3. **Final report**: After the review is complete, report the full results to the user
 
-구현 중 3개 이상 파일로 확대된 경우, 사용자에게 "coding-pipeline으로 전환할까요?"라고 확인할 것 (규모 확대는 사용자 판단 필요)
+If the scope expands to 3+ files during implementation, ask the user: "Should I switch to coding-pipeline?"  (scope expansion requires user judgment)
 
-**체인 depth 제한**: 자동 전환이 3회를 초과하면 중간 결과를 사용자에게 보고하고 다음 단계 진행 여부를 확인할 것
+**Chain depth limit**: If auto-transitions exceed 3, report intermediate results to the user and confirm whether to proceed with the next step.
 
-## 스킬 수정은 impl 범위 밖
+## Skill Modifications Are Out of Scope
 
-대상이 **스킬**인 경우, 이 워크플로우(impl)를 사용하지 말 것. `read_skill("skill-creator")`로 skill-creator 워크플로우를 로드하여 진행할 것. impl은 워크스페이스/페이지 파일 전용.
+If the target is a **skill**, do not use this workflow (impl). Load the skill-creator workflow with `read_skill("skill-creator")` instead. Impl is for workspace/page files only.
 
-## 주의사항
+## Notes
 
-- 요청받지 않은 리팩토링, 최적화, 스타일 변경을 하지 말 것
-- 과도한 추상화를 만들지 말 것 — 현재 필요한 만큼만 구현할 것
-- 기존 테스트를 깨뜨리지 말 것
+- Do not perform unsolicited refactoring, optimization, or style changes
+- Do not create excessive abstractions — implement only what is currently needed
+- Do not break existing tests

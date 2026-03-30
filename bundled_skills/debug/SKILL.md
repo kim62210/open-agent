@@ -1,10 +1,10 @@
 ---
 name: debug
 description: >
-  버그 진단 및 수정을 위한 체계적 디버깅 워크플로우.
-  사용자가 버그를 보고하거나, 오류를 수정해달라고 요청하거나, 예상과 다른 동작을 조사해달라고 할 때 사용합니다.
-  "이거 왜 안 돼?", "에러 수정해줘", "버그 찾아줘", "왜 이렇게 동작해?",
-  "오류가 나요", "디버깅 해줘" 등의 요청에 트리거됩니다.
+  Systematic debugging workflow for diagnosing and fixing bugs.
+  Used when the user reports a bug, asks to fix an error, or wants to investigate unexpected behavior.
+  Triggered by requests like "why doesn't this work?", "fix this error", "find the bug",
+  "why does it behave like this?", "I'm getting an error", "debug this", etc.
 allowed-tools:
   - search
   - read_file
@@ -15,72 +15,72 @@ allowed-tools:
 
 # Debug
 
-버그 진단 및 수정을 위한 6단계 워크플로우.
+A 6-step workflow for diagnosing and fixing bugs.
 
-**핵심 규칙: 4단계(근본 원인 확정) 전까지 코드를 절대 수정하지 말 것.**
+**Core rule: Do not modify any code until Step 4 (root cause confirmed).**
 
-## 1단계: 재현
+## Step 1: Reproduce
 
-1. 사용자가 보고한 증상을 정확히 파악할 것
-2. 오류 메시지, 스택 트레이스, 재현 절차를 확인할 것
-3. 가능하면 `bash`로 직접 재현할 것
-4. 재현 불가 시 사용자에게 추가 정보를 요청할 것
+1. Accurately identify the symptoms reported by the user
+2. Confirm error messages, stack traces, and reproduction steps
+3. If possible, reproduce directly using `bash`
+4. If reproduction fails, request additional information from the user
 
-## 2단계: 증거 수집
+## Step 2: Gather Evidence
 
-1. `search`으로 오류 메시지, 관련 함수명, 변수명을 검색할 것
-2. `read_file`로 관련 파일을 읽을 것
-3. `bash`로 로그, 상태, 환경 정보를 수집할 것
-4. 관련 파일 목록을 정리할 것
+1. Use `search` to look for error messages, related function names, and variable names
+2. Use `read_file` to read related files
+3. Use `bash` to collect logs, status, and environment information
+4. Compile the list of related files
 
-## 3단계: 데이터 흐름 추적
+## Step 3: Trace Data Flow
 
-1. 입력에서 출력까지 데이터가 흐르는 경로를 추적할 것
-2. 각 단계에서 데이터의 예상 값과 실제 값을 비교할 것
-3. 분기점(조건문, 에러 핸들링)을 확인할 것
-4. 외부 의존성(API, DB, 파일 시스템)의 상태를 확인할 것
+1. Trace the path data flows from input to output
+2. Compare expected vs. actual values at each step
+3. Check branching points (conditionals, error handlers)
+4. Check the state of external dependencies (API, DB, filesystem)
 
-## 4단계: 근본 원인 확정
+## Step 4: Confirm Root Cause
 
-1. 수집한 증거를 기반으로 가설을 수립할 것
-2. 가설을 검증할 수 있는 테스트를 실행할 것
-3. 근본 원인을 한 문장으로 명확히 기술할 것
-4. **근본 원인이 확정되지 않으면 절대 수정 단계로 넘어가지 말 것**
+1. Formulate hypotheses based on collected evidence
+2. Run tests to verify hypotheses
+3. Clearly state the root cause in one sentence
+4. **Do not proceed to the fix step unless the root cause is confirmed**
 
-## 5단계: 최소 수정
+## Step 5: Minimal Fix
 
-1. 근본 원인만 해결하는 최소한의 변경을 적용할 것
-2. `edit_file`로 수정할 것
-3. 관련 없는 코드를 건드리지 말 것 — 리팩토링, 스타일 변경 금지
-4. 수정 내용을 사용자에게 설명할 것
+1. Apply the minimum change that addresses only the root cause
+2. Use `edit_file` to make corrections
+3. Do not touch unrelated code — no refactoring or style changes
+4. Explain the fix to the user
 
-## 6단계: 검증
+## Step 6: Verify
 
-1. `bash`로 수정 후 재현 테스트를 실행할 것
-2. 원래 증상이 해소되었는지 확인할 것
-3. 기존 기능에 부작용이 없는지 확인할 것
-4. 결과를 사용자에게 보고할 것
+1. Use `bash` to run reproduction tests after the fix
+2. Confirm the original symptoms are resolved
+3. Verify no side effects on existing functionality
+4. Report results to the user
 
-## 스킬 디버깅
+## Skill Debugging
 
-대상이 **스킬 스크립트**인 경우: `read_skill`로 내용 확인 후 `read_skill("skill-creator")`로 skill-creator 워크플로우를 로드하여 수정. 워크스페이스 도구(read_file, edit_file)로는 스킬에 접근 불가.
+If the target is a **skill script**: check content with `read_skill`, then load the skill-creator workflow with `read_skill("skill-creator")` for modifications. Skill files cannot be accessed via workspace tools (read_file, edit_file).
 
-## 주의사항
+## Notes
 
-- 추측으로 코드를 수정하지 말 것. 항상 증거 기반으로 판단할 것
-- 한 번에 하나의 가설만 검증할 것
-- 수정이 실패하면 되돌리고 다른 가설을 검토할 것
-- **가설 3개를 검증해도 원인을 찾지 못하면** 사용자에게 현재까지의 분석 결과를 보고하고 추가 정보를 요청할 것
-- 대상이 불분명한 요청("고쳐줘" 단독 등)은 먼저 "무엇을 고칠까요?"를 확인할 것
+- Do not modify code based on guesses. Always make evidence-based decisions
+- Verify only one hypothesis at a time
+- If a fix fails, revert and examine a different hypothesis
+- **If 3 hypotheses are tested without finding the cause**, report the analysis so far to the user and request additional information
+- For vague requests (e.g., "fix it" alone), first confirm "What should be fixed?"
 
-## 완료 후 자동 전환
+## Auto-Transition After Completion
 
-버그 수정 완료 후 사용자 확인 없이 자동으로 다음 단계를 진행할 것:
+After the bug fix is complete, automatically proceed to the next steps without user confirmation:
 
-1. **회귀 테스트 자동 작성**: 수정한 코드에 관련 테스트가 없으면, `read_skill("test")`로 테스트 워크플로우를 로드하고 이 버그의 재발을 방지할 회귀 테스트를 즉시 작성할 것
-2. **리뷰 자동 진행**: 테스트 완료 후, `read_skill("review")`로 리뷰 워크플로우를 로드하고 수정사항을 자체 리뷰할 것
-3. **최종 보고**: 리뷰까지 완료한 뒤 전체 결과(원인, 수정 내용, 테스트, 리뷰)를 사용자에게 보고할 것
+1. **Auto-write regression test**: If no related tests exist for the fixed code, load the test workflow with `read_skill("test")` and immediately write a regression test to prevent recurrence
+2. **Auto-review**: After testing is complete, load the review workflow with `read_skill("review")` and self-review the changes
+3. **Final report**: After the review is complete, report the full results (cause, fix, tests, review) to the user
 
-수정 과정에서 구조적 문제를 발견한 경우, 사용자에게 "리팩토링 계획을 세울까요?"라고 확인할 것 (대규모 변경은 사용자 판단 필요)
+If structural issues are discovered during the fix, ask the user: "Should I create a refactoring plan?" (large-scale changes require user judgment)
 
-**체인 depth 제한**: 자동 전환이 3회를 초과하면 중간 결과를 사용자에게 보고하고 다음 단계 진행 여부를 확인할 것
+**Chain depth limit**: If auto-transitions exceed 3, report intermediate results to the user and confirm whether to proceed with the next step.

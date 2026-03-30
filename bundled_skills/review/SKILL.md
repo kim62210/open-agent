@@ -1,10 +1,10 @@
 ---
 name: review
 description: >
-  코드 및 문서 리뷰를 위한 읽기 전용 워크플로우.
-  사용자가 코드나 문서의 변경사항을 검토하거나, 품질을 평가하거나, 문제점을 찾아달라고 할 때 사용합니다.
-  "코드 리뷰해줘", "이 변경사항 검토해줘", "코드 괜찮은지 봐줘",
-  "문서 검토해줘", "문제 있는지 확인해줘", "PR 리뷰해줘", "diff 봐줘" 등의 요청에 트리거됩니다.
+  Read-only workflow for code and documentation review.
+  Used when the user asks to review code or document changes, evaluate quality, or find issues.
+  Triggered by requests like "review the code", "check these changes", "see if the code is okay",
+  "review the documentation", "check for problems", "review the PR", "look at the diff", etc.
 allowed-tools:
   - search
   - read_file
@@ -14,78 +14,78 @@ allowed-tools:
 
 # Review
 
-코드 리뷰를 위한 6단계 워크플로우.
+A 6-step workflow for code review.
 
-**이 스킬은 코드를 수정하지 않는다. 문제를 발견하고 보고만 할 것.**
+**This skill does not modify code. Only find and report issues.**
 
-## 1단계: 변경 파악
+## Step 1: Identify Changes
 
-1. `bash`로 `git diff`를 실행하여 변경 범위를 파악할 것
-   - 스테이징된 변경: `git diff --cached`
-   - 전체 변경: `git diff HEAD`
-   - 특정 커밋 비교: `git diff <commit1> <commit2>`
-2. 변경된 파일 목록과 각 파일의 변경 크기를 확인할 것
-3. `read_file`로 변경된 파일의 전체 컨텍스트를 읽을 것
+1. Use `bash` to run `git diff` and identify the scope of changes
+   - Staged changes: `git diff --cached`
+   - All changes: `git diff HEAD`
+   - Specific commit comparison: `git diff <commit1> <commit2>`
+2. Check the list of changed files and the size of changes in each file
+3. Use `read_file` to read the full context of changed files
 
-## 2단계: 버그 체크
+## Step 2: Bug Check
 
-1. 논리 오류를 검토할 것:
-   - 조건문 누락 또는 반전
-   - 오프바이원 에러
-   - null/undefined 미처리
-   - 타입 불일치
-2. 리소스 관리를 검토할 것:
-   - 메모리 누수 (이벤트 리스너, 타이머 미정리)
-   - 파일/연결 미해제
-3. 동시성 문제를 검토할 것:
-   - 레이스 컨디션
-   - 데드락 가능성
+1. Review for logic errors:
+   - Missing or inverted conditionals
+   - Off-by-one errors
+   - Unhandled null/undefined
+   - Type mismatches
+2. Review resource management:
+   - Memory leaks (uncleared event listeners, timers)
+   - Unreleased files/connections
+3. Review concurrency issues:
+   - Race conditions
+   - Potential deadlocks
 
-## 3단계: 엣지 케이스
+## Step 3: Edge Cases
 
-1. 입력 경계값을 검토할 것: 빈 값, null, 최대값, 음수
-2. 에러 핸들링 누락을 확인할 것
-3. 네트워크 실패, 타임아웃 등 외부 의존성 실패 처리를 확인할 것
+1. Review input boundary values: empty values, null, maximum values, negatives
+2. Check for missing error handling
+3. Check handling of external dependency failures (network, timeouts)
 
-## 4단계: 통합 체크
+## Step 4: Integration Check
 
-1. `search`으로 변경된 함수/타입의 모든 사용처를 찾을 것
-2. 기존 호출자에 영향이 없는지 확인할 것
-3. API 계약(함수 시그니처, 반환 타입)이 유지되는지 확인할 것
-4. 기존 테스트가 여전히 유효한지 확인할 것
+1. Use `search` to find all usage sites of changed functions/types
+2. Verify no impact on existing callers
+3. Verify API contracts (function signatures, return types) are maintained
+4. Verify existing tests remain valid
 
-## 5단계: 보안
+## Step 5: Security
 
-1. 사용자 입력 검증 여부를 확인할 것
-2. 인젝션 취약점(SQL, XSS, 명령어 인젝션)을 검토할 것
-3. 인증/인가 누락을 확인할 것
-4. 민감 정보(비밀번호, API 키) 노출 여부를 확인할 것
+1. Check input validation
+2. Review for injection vulnerabilities (SQL, XSS, command injection)
+3. Check for missing authentication/authorization
+4. Check for exposure of sensitive information (passwords, API keys)
 
-## 스킬 리뷰
+## Skill Review
 
-대상이 **스킬**인 경우: `read_skill`로 내용 확인, `read_skill_reference`로 참조 문서 검토. 워크스페이스 도구(read_file, search)로는 스킬에 접근 불가.
+If the target is a **skill**: check content with `read_skill`, review reference documents with `read_skill_reference`. Skill files cannot be accessed via workspace tools (read_file, search).
 
-## 6단계: 판정
+## Step 6: Verdict
 
-결과를 아래 형식으로 보고할 것:
+Report results in the following format:
 
 ```
-## 리뷰 결과
+## Review Result
 
-### 심각도별 이슈
-- 🔴 Critical: [즉시 수정 필요한 버그/보안 문제]
-- 🟡 Warning: [잠재적 문제, 권장 수정]
-- 🔵 Info: [개선 제안, 스타일 코멘트]
+### Issues by Severity
+- Critical: [Bugs/security issues requiring immediate fix]
+- Warning: [Potential issues, recommended fix]
+- Info: [Improvement suggestions, style comments]
 
-### 요약
-- 전체 평가: [승인 / 조건부 승인 / 수정 요청]
-- 핵심 피드백: [가장 중요한 1-2개 포인트]
+### Summary
+- Overall assessment: [Approved / Conditionally approved / Changes requested]
+- Key feedback: [1-2 most important points]
 ```
 
-## 완료 후 자동 전환
+## Auto-Transition After Completion
 
-리뷰 완료 후, 발견된 이슈 심각도에 따라 자동으로 처리할 것:
+After review completion, automatically handle based on issue severity:
 
-1. **Critical 이슈 자동 수정**: Critical 버그/보안 문제가 있으면, `read_skill("debug")`로 디버그 워크플로우를 로드하고 즉시 수정할 것
-2. **승인 또는 Info만 있는 경우**: 최종 결과를 사용자에게 보고하고 종료할 것
-3. **Warning 수준 이슈**: 이슈 목록과 함께 "권장 수정사항을 적용할까요?"라고 사용자에게 확인할 것 (Warning은 선택적이므로 사용자 판단 필요)
+1. **Auto-fix Critical issues**: If Critical bugs/security issues are found, load the debug workflow with `read_skill("debug")` and fix immediately
+2. **Approved or Info-only**: Report final results to the user and terminate
+3. **Warning-level issues**: Present the issue list and ask the user "Should I apply the recommended fixes?" (Warnings are optional, requiring user judgment)

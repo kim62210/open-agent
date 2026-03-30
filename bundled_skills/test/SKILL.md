@@ -1,10 +1,10 @@
 ---
 name: test
 description: >
-  테스트 코드 작성 및 실행을 위한 워크플로우.
-  사용자가 테스트를 작성하거나, 테스트 커버리지를 높이거나, 기존 코드에 테스트를 추가해달라고 할 때 사용합니다.
-  "테스트 작성해줘", "테스트 추가해줘", "테스트 코드 만들어줘", "테스트 코드 작성해줘",
-  "이 함수 테스트해줘", "유닛 테스트 만들어줘", "커버리지 높여줘" 등의 요청에 트리거됩니다.
+  Workflow for writing and running test code.
+  Used when the user asks to write tests, increase test coverage, or add tests to existing code.
+  Triggered by requests like "write tests", "add tests", "create test code",
+  "test this function", "create unit tests", "increase coverage", etc.
 allowed-tools:
   - search
   - read_file
@@ -16,70 +16,70 @@ allowed-tools:
 
 # Test
 
-테스트 작성을 위한 5단계 워크플로우.
+A 5-step workflow for writing tests.
 
-## 1단계: 대상 분석
+## Step 1: Analyze Target
 
-1. `read_file`로 테스트 대상 코드를 읽을 것
-2. 공개 인터페이스(함수, 메서드, API)를 파악할 것
-3. 입력 타입, 반환 타입, 부작용을 분석할 것
-4. 분기 조건, 에러 처리 경로를 파악할 것
+1. Use `read_file` to read the target code
+2. Identify the public interface (functions, methods, API)
+3. Analyze input types, return types, and side effects
+4. Identify branching conditions and error handling paths
 
-## 2단계: 기존 테스트 조사
+## Step 2: Research Existing Tests
 
-1. `search`과 `list_files`으로 기존 테스트 파일을 찾을 것
-   - 패턴: `*.test.*`, `*.spec.*`, `test_*.py`, `*_test.go` 등
-2. 기존 테스트가 있으면 `read_file`로 읽고 분석할 것:
-   - 사용 중인 테스트 프레임워크 (pytest, jest, vitest 등)
-   - 테스트 구조 (describe/it, class-based 등)
-   - Mock/Stub 패턴
-   - 픽스처/팩토리 패턴
-3. 기존 테스트의 패턴과 스타일을 반드시 따를 것
+1. Use `search` and `list_files` to find existing test files
+   - Patterns: `*.test.*`, `*.spec.*`, `test_*.py`, `*_test.go`, etc.
+2. If existing tests are found, use `read_file` to read and analyze them:
+   - Test framework in use (pytest, jest, vitest, etc.)
+   - Test structure (describe/it, class-based, etc.)
+   - Mock/Stub patterns
+   - Fixture/Factory patterns
+3. Always follow existing test patterns and style
 
-## 3단계: 테스트 케이스 설계
+## Step 3: Design Test Cases
 
-1. 정상 경로 (Happy path) 케이스를 먼저 설계할 것
-2. 경계값 케이스를 설계할 것:
-   - 빈 입력, null, undefined
-   - 최소값, 최대값, 경계값
-   - 빈 배열, 단일 요소 배열
-3. 에러 케이스를 설계할 것:
-   - 유효하지 않은 입력
-   - 외부 의존성 실패
-   - 타임아웃, 네트워크 에러
-4. 각 케이스에 명확한 이름을 부여할 것
+1. Design happy path cases first
+2. Design boundary value cases:
+   - Empty input, null, undefined
+   - Minimum, maximum, boundary values
+   - Empty arrays, single-element arrays
+3. Design error cases:
+   - Invalid input
+   - External dependency failures
+   - Timeouts, network errors
+4. Give each case a clear descriptive name
 
-## 4단계: 테스트 작성
+## Step 4: Write Tests
 
-1. 기존 테스트 파일이 있으면 `edit_file`로 추가할 것
-2. 새 테스트 파일이면 `write_file`로 생성할 것
-3. 테스트 작성 원칙:
-   - AAA 패턴: Arrange → Act → Assert
-   - 각 테스트는 하나의 동작만 검증할 것
-   - 테스트 간 의존성을 만들지 말 것
-   - Mock은 최소한으로 사용할 것
-   - 테스트 이름으로 의도를 명확히 표현할 것
+1. If an existing test file exists, use `edit_file` to add tests
+2. For new test files, use `write_file` to create them
+3. Test writing principles:
+   - AAA pattern: Arrange -> Act -> Assert
+   - Each test should verify only one behavior
+   - Do not create dependencies between tests
+   - Use mocks minimally
+   - Express intent clearly through test names
 
-## 스킬 테스트
+## Skill Tests
 
-대상이 **스킬 스크립트**인 경우: `run_skill_script`로 테스트 실행, `read_skill`로 내용 확인. 수정이 필요하면 `read_skill("skill-creator")`로 skill-creator 워크플로우 위임.
+If the target is a **skill script**: use `run_skill_script` to run tests, `read_skill` to check content. If modifications are needed, delegate to skill-creator workflow via `read_skill("skill-creator")`.
 
-## 5단계: 실행 및 반복
+## Step 5: Run and Iterate
 
-1. `bash`로 테스트를 실행할 것 (스킬 대상이면 `run_skill_script` 사용)
-2. 실패한 테스트를 분석할 것:
-   - 테스트 코드의 오류인지 대상 코드의 버그인지 구분
-   - 테스트 오류면 수정 후 재실행
-   - 대상 코드 버그면 **완료 후 자동 전환 섹션의 버그 처리 절차를 따를 것**
-3. 테스트 코드 수정은 **최대 3회까지만** 반복할 것. 3회 초과 시 사용자에게 상황을 보고하고 지시를 받을 것
-4. 결과를 사용자에게 보고할 것:
-   - 작성한 테스트 수
-   - 커버리지 변화 (측정 가능한 경우)
-   - 발견한 버그 (있는 경우)
+1. Use `bash` to run tests (use `run_skill_script` for skill targets)
+2. Analyze failed tests:
+   - Determine if it's a test code error or a target code bug
+   - If test error, fix and re-run
+   - If target code bug, **follow the bug handling procedure in the Auto-Transition section**
+3. Test code fixes should be repeated **at most 3 times**. After 3 attempts, report the situation to the user and await instructions
+4. Report results to the user:
+   - Number of tests written
+   - Coverage change (if measurable)
+   - Bugs discovered (if any)
 
-## 완료 후 자동 전환
+## Auto-Transition After Completion
 
-테스트 완료 후 사용자 확인 없이 자동으로 다음 단계를 진행할 것:
+After testing is complete, automatically proceed to the next steps without user confirmation:
 
-1. **버그 발견 시 자동 디버깅**: 대상 코드에서 버그를 발견하면, `read_skill("debug")`로 디버그 워크플로우를 로드하고 즉시 진단·수정할 것. 수정 후 테스트를 재실행하여 통과를 확인할 것
-2. **모든 테스트 통과 시**: 이 워크플로우를 시작하기 전 워크플로우(impl, debug 등)가 있었다면, 해당 워크플로우의 남은 단계로 복귀할 것. 단독 실행이었다면 결과를 사용자에게 보고할 것
+1. **Auto-debug on bug discovery**: If a bug is found in the target code, load the debug workflow with `read_skill("debug")` and immediately diagnose and fix it. Re-run tests after the fix to confirm they pass
+2. **When all tests pass**: If there was a prior workflow (impl, debug, etc.) before this one, return to the remaining steps of that workflow. If this was a standalone execution, report results to the user
