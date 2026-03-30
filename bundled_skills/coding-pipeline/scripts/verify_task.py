@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""작업 검증 스크립트 — 린트 및 테스트를 실행하고 결과를 보고.
+"""Task verification script -- runs lint and tests, then reports results.
 
 Usage:
     python verify_task.py <project_root> [--files file1 file2 ...]
 
 Output:
-    JSON 형식의 검증 결과 (stdout)
+    JSON-formatted verification result (stdout)
 """
 
 import argparse
@@ -17,11 +17,11 @@ import sys
 from pathlib import Path
 
 _IS_WIN = sys.platform == "win32"
-_PYTHON = sys.executable  # 현재 인터프리터 (크로스 플랫폼)
+_PYTHON = sys.executable  # Current interpreter (cross-platform)
 
 
 def _node_bin(root: Path, name: str) -> str | None:
-    """node_modules/.bin 에서 실행 파일 경로를 반환 (Windows: .cmd 우선)."""
+    """Return executable path from node_modules/.bin (Windows: .cmd first)."""
     bin_dir = root / "node_modules" / ".bin"
     if _IS_WIN:
         cmd_path = bin_dir / f"{name}.cmd"
@@ -35,7 +35,7 @@ def _node_bin(root: Path, name: str) -> str | None:
 
 
 def run_command(cmd: list[str], cwd: str, timeout: int = 60) -> dict:
-    """명령을 실행하고 결과를 반환."""
+    """Execute a command and return the result."""
     try:
         result = subprocess.run(
             cmd,
@@ -70,7 +70,7 @@ def run_command(cmd: list[str], cwd: str, timeout: int = 60) -> dict:
 
 
 def detect_and_run_linters(root: Path, files: list[str] | None = None) -> list[dict]:
-    """감지된 린터를 실행."""
+    """Detect and run available linters."""
     results = []
     root_str = str(root)
 
@@ -81,7 +81,7 @@ def detect_and_run_linters(root: Path, files: list[str] | None = None) -> list[d
             target = files if files else ["."]
             results.append(run_command(["ruff", "check"] + target, root_str))
 
-    # JavaScript/TypeScript — ESLint
+    # JavaScript/TypeScript -- ESLint
     if (root / "package.json").exists():
         eslint = _node_bin(root, "eslint")
         if eslint:
@@ -104,7 +104,7 @@ def detect_and_run_linters(root: Path, files: list[str] | None = None) -> list[d
 
 
 def detect_and_run_tests(root: Path) -> list[dict]:
-    """감지된 테스트 프레임워크를 실행."""
+    """Detect and run available test frameworks."""
     results = []
     root_str = str(root)
 
@@ -139,7 +139,7 @@ def detect_and_run_tests(root: Path) -> list[dict]:
 
 
 def check_syntax(root: Path, files: list[str]) -> list[dict]:
-    """파일별 구문 검사."""
+    """Per-file syntax check."""
     results = []
     for f in files:
         filepath = Path(f) if os.path.isabs(f) else root / f
@@ -164,24 +164,24 @@ def check_syntax(root: Path, files: list[str]) -> list[dict]:
 
 
 def _command_exists(cmd: str) -> bool:
-    """명령이 존재하는지 확인 (크로스 플랫폼)."""
+    """Check if a command exists (cross-platform)."""
     return shutil.which(cmd) is not None
 
 
 def verify(root: Path, files: list[str] | None = None) -> dict:
-    """전체 검증을 실행."""
+    """Run full verification."""
     all_results = []
 
-    # 1. 구문 검사 (특정 파일이 지정된 경우)
+    # 1. Syntax check (when specific files are specified)
     if files:
         syntax_results = check_syntax(root, files)
         all_results.extend(syntax_results)
 
-    # 2. 린터 실행
+    # 2. Run linters
     lint_results = detect_and_run_linters(root, files)
     all_results.extend(lint_results)
 
-    # 3. 테스트 실행
+    # 3. Run tests
     test_results = detect_and_run_tests(root)
     all_results.extend(test_results)
 
@@ -199,9 +199,9 @@ def verify(root: Path, files: list[str] | None = None) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="작업 검증 (린트 + 테스트)")
-    parser.add_argument("project_root", help="프로젝트 루트 경로")
-    parser.add_argument("--files", nargs="*", help="검증할 특정 파일 목록")
+    parser = argparse.ArgumentParser(description="Task verification (lint + test)")
+    parser.add_argument("project_root", help="Project root path")
+    parser.add_argument("--files", nargs="*", help="Specific files to verify")
     args = parser.parse_args()
 
     root = Path(args.project_root)
@@ -212,7 +212,7 @@ def main():
     result = verify(root, args.files)
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
-    # 항상 exit(0): JSON 결과가 skill_manager에서 손실되지 않도록
+    # Always exit(0): prevent JSON result from being lost by skill_manager
     sys.exit(0)
 
 

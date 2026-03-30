@@ -1,12 +1,13 @@
 ---
 name: coding-pipeline
 description: >
-  3개 이상 파일을 수정하는 복잡한 코딩 또는 문서 작업을 위한 체계적 파이프라인.
-  단순 기능 추가가 아닌, 여러 모듈에 걸친 대규모 변경이 필요할 때 사용합니다.
-  "대규모 리팩토링", "새 모듈 시스템 구축", "전체 API 재설계",
-  "크로스커팅 기능 추가", "마이그레이션 작업", "전체 문서 재구성" 등의 요청에 트리거됩니다.
-  단일 파일 수정이나 2개 이하 파일 변경은 impl 스킬을 사용할 것.
-  버그 수정은 debug 스킬을 사용할 것.
+  Systematic pipeline for complex coding or documentation tasks that modify 3 or more files.
+  Used when large-scale changes spanning multiple modules are needed, not simple feature additions.
+  Triggered by requests like "large-scale refactoring", "build a new module system",
+  "redesign the entire API", "add cross-cutting features", "migration work",
+  "restructure all documentation", etc.
+  For single-file changes or modifications to 2 or fewer files, use the impl skill.
+  For bug fixes, use the debug skill.
 allowed-tools:
   - search
   - read_file
@@ -19,79 +20,79 @@ allowed-tools:
 
 # Coding Pipeline
 
-복잡한 코딩 작업을 위한 Orchestrator→Developer→Verifier 단일 에이전트 파이프라인.
+An Orchestrator -> Developer -> Verifier single-agent pipeline for complex coding tasks.
 
-## 1단계: 분석 (Orchestrator)
+## Step 1: Analysis (Orchestrator)
 
-1. `run_skill_script("coding-pipeline", "analyze_project.py", [워크스페이스_루트_절대경로])`를 실행하여 프로젝트 구조를 파악할 것
-2. `read_file`로 핵심 파일들을 읽고 아키텍처를 파악할 것
-3. `search`으로 변경 대상과 관련된 모든 코드를 검색할 것
-4. 분석 결과를 정리할 것:
-   - 프로젝트 언어/프레임워크
-   - 디렉토리 구조 및 네이밍 컨벤션
-   - 기존 패턴 (임포트, 에러처리, 타입 등)
-   - 영향 범위
+1. Run `run_skill_script("coding-pipeline", "analyze_project.py", [workspace_root_absolute_path])` to understand the project structure
+2. Use `read_file` to read key files and understand the architecture
+3. Use `search` to find all code related to the change target
+4. Organize analysis results:
+   - Project language/framework
+   - Directory structure and naming conventions
+   - Existing patterns (imports, error handling, types, etc.)
+   - Impact scope
 
-## 2단계: 계획 및 작업 분해 (Orchestrator)
+## Step 2: Plan and Task Decomposition (Orchestrator)
 
-1. 전체 작업을 독립적인 하위 작업으로 분해할 것
-2. 작업 분해 시 `read_skill_reference("coding-pipeline", "task-decomposition.md")`로 분해 가이드를 읽고 적용할 것
-3. 각 하위 작업에 포함할 것:
+1. Break the overall task into independent subtasks
+2. When decomposing tasks, read and apply the decomposition guide with `read_skill_reference("coding-pipeline", "task-decomposition.md")`
+3. Include for each subtask:
    - **ID**: T1, T2, T3, ...
-   - **목표**: 이 작업에서 달성할 것
-   - **대상 파일**: 수정/생성할 파일 목록
-   - **의존성**: 선행 작업 ID
-   - **검증 기준**: 이 작업의 성공 확인 방법
-4. 의존성 순서대로 실행 순서를 결정할 것
-5. 사용자에게 계획을 보고하고 승인을 받을 것
+   - **Goal**: What this task will achieve
+   - **Target files**: List of files to modify/create
+   - **Dependencies**: Prerequisite task IDs
+   - **Verification criteria**: How to confirm this task's success
+4. Determine execution order based on dependencies
+5. Report the plan to the user and get approval
 
-## 3단계: 순차 실행 (Developer + Verifier)
+## Step 3: Sequential Execution (Developer + Verifier)
 
-각 하위 작업에 대해 아래를 반복:
+Repeat the following for each subtask:
 
-### Developer 단계
-1. 해당 작업의 대상 파일을 읽고 컨텍스트를 파악할 것
-2. 기존 패턴을 따라 코드를 작성/수정할 것
-3. `edit_file` 또는 `write_file`로 변경을 적용할 것
+### Developer Phase
+1. Read target files for the task and understand the context
+2. Write/modify code following existing patterns
+3. Apply changes with `edit_file` or `write_file`
 
-### Verifier 단계
-1. `run_skill_script("coding-pipeline", "verify_task.py", [워크스페이스_루트_절대경로, "--files", "변경된파일1", "변경된파일2"])`를 실행하여 해당 서브태스크에서 변경된 파일만 대상으로 검증할 것
-2. 구문 오류, 린트 에러를 확인할 것
-3. 변경된 파일과 관련된 기존 테스트를 실행할 것
-4. 검증 실패 시:
-   - 에러 내용을 분석할 것
-   - Developer 단계로 돌아가 수정할 것
-   - **실패 횟수를 반드시 추적할 것** (예: "T1 검증 2/3회 실패")
-   - 3회 실패 시 해당 작업을 중단하고 사용자에게 보고 후 지시를 받을 것
-5. 검증 통과 시 다음 하위 작업으로 진행할 것
+### Verifier Phase
+1. Run `run_skill_script("coding-pipeline", "verify_task.py", [workspace_root_absolute_path, "--files", "changed_file1", "changed_file2"])` to verify only the files changed in that subtask
+2. Check for syntax errors and lint errors
+3. Run existing tests related to the changed files
+4. On verification failure:
+   - Analyze the error content
+   - Return to the Developer phase for fixes
+   - **Always track failure count** (e.g., "T1 verification failed 2/3 times")
+   - After 3 failures, stop that task, report to the user, and await instructions
+5. On verification pass, proceed to the next subtask
 
-## 4단계: 최종 검증 (Orchestrator)
+## Step 4: Final Verification (Orchestrator)
 
-1. 모든 하위 작업이 완료되었는지 확인할 것
-2. `bash`로 전체 빌드/테스트를 실행할 것
-3. 변경된 파일 전체를 리뷰할 것:
-   - 일관된 스타일
-   - 누락된 임포트
-   - 불필요한 디버깅 코드
-4. 최종 결과를 사용자에게 보고할 것:
-   - 완료된 작업 목록
-   - 변경된 파일 목록
-   - 실행한 검증 결과
+1. Confirm all subtasks are completed
+2. Run the full build/test suite with `bash`
+3. Review all changed files:
+   - Consistent style
+   - Missing imports
+   - Unnecessary debug code
+4. Report final results to the user:
+   - Completed task list
+   - List of changed files
+   - Verification results
 
-## 완료 후 자동 전환
+## Auto-Transition After Completion
 
-파이프라인 완료 후 사용자 확인 없이 자동으로 다음 단계를 진행할 것:
+After pipeline completion, automatically proceed to the next steps without user confirmation:
 
-1. **테스트 자동 진행**: 변경된 모듈에 관련 테스트가 없으면, `read_skill("test")`로 테스트 워크플로우를 로드하고 핵심 변경사항에 대한 테스트를 작성할 것
-2. **리뷰 자동 진행**: 테스트 완료 후, `read_skill("review")`로 리뷰 워크플로우를 로드하고 전체 변경사항을 자체 리뷰할 것
-3. **최종 보고**: 리뷰까지 완료한 뒤 전체 결과(완료 작업, 변경 파일, 테스트 결과, 리뷰 판정)를 사용자에게 보고할 것
+1. **Auto-test**: If changed modules lack related tests, load the test workflow with `read_skill("test")` and write tests for key changes
+2. **Auto-review**: After testing is complete, load the review workflow with `read_skill("review")` and self-review all changes
+3. **Final report**: After the review is complete, report the full results (completed tasks, changed files, test results, review verdict) to the user
 
-## 스킬 수정 포함 시
+## When Skill Modifications Are Included
 
-파이프라인에 **스킬 수정**이 포함된 경우: `read_skill("skill-creator")`로 skill-creator 워크플로우를 로드하여 해당 서브태스크를 처리. 워크스페이스 도구로는 스킬에 접근 불가.
+If the pipeline includes **skill modifications**: load the skill-creator workflow with `read_skill("skill-creator")` to handle that subtask. Skill files cannot be accessed via workspace tools.
 
-## 주의사항
+## Notes
 
-- 각 하위 작업은 독립적으로 검증 가능해야 한다
-- 하위 작업 실패가 다른 작업에 전파되지 않도록 할 것
-- 대규모 변경 시 중간 중간 사용자에게 진행 상황을 보고할 것
+- Each subtask must be independently verifiable
+- Ensure subtask failures do not propagate to other tasks
+- Report progress to the user periodically during large-scale changes

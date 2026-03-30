@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""프로젝트 구조를 분석하여 JSON 요약을 출력하는 스크립트.
+"""Analyze project structure and output a JSON summary.
 
 Usage:
     python3 analyze_project.py <project_root> [--max-depth N]
 
 Output:
-    JSON 형식의 프로젝트 분석 결과 (stdout)
+    JSON-formatted project analysis result (stdout)
 """
 
 import argparse
@@ -65,7 +65,7 @@ CONFIG_FILES = {
 
 
 def scan_directory(root: Path, max_depth: int = 3) -> dict:
-    """디렉토리를 스캔하여 트리 구조를 반환."""
+    """Scan a directory and return a tree structure."""
     tree = {}
     file_counts: dict[str, int] = {}
     total_files = 0
@@ -106,7 +106,7 @@ def scan_directory(root: Path, max_depth: int = 3) -> dict:
 
 
 def detect_stack(root: Path, file_counts: dict[str, int]) -> dict:
-    """프로젝트의 기술 스택을 감지."""
+    """Detect the project's technology stack."""
     languages = []
     frameworks = []
 
@@ -125,7 +125,7 @@ def detect_stack(root: Path, file_counts: dict[str, int]) -> dict:
 
 
 def find_key_files(root: Path) -> list[str]:
-    """프로젝트의 핵심 파일을 찾음."""
+    """Find key project files."""
     key_patterns = [
         "README.md", "README.rst",
         "package.json", "pyproject.toml", "Cargo.toml", "go.mod",
@@ -142,7 +142,7 @@ def find_key_files(root: Path) -> list[str]:
 
 
 def find_entry_points(root: Path) -> list[str]:
-    """진입점 파일을 찾음."""
+    """Find entry point files."""
     candidates = [
         "src/main.py", "src/app.py", "src/index.ts", "src/index.js",
         "main.py", "app.py", "index.ts", "index.js",
@@ -159,7 +159,7 @@ def find_entry_points(root: Path) -> list[str]:
 
 
 def analyze(root: Path, max_depth: int = 3) -> dict:
-    """프로젝트를 분석하여 종합 결과를 반환."""
+    """Analyze a project and return comprehensive results."""
     scan = scan_directory(root, max_depth)
     stack = detect_stack(root, scan["file_counts"])
 
@@ -177,9 +177,9 @@ def analyze(root: Path, max_depth: int = 3) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="프로젝트 구조 분석")
-    parser.add_argument("project_root", help="분석할 프로젝트 루트 경로")
-    parser.add_argument("--max-depth", type=int, default=3, help="탐색 최대 깊이 (기본: 3)")
+    parser = argparse.ArgumentParser(description="Project structure analysis")
+    parser.add_argument("project_root", help="Project root path to analyze")
+    parser.add_argument("--max-depth", type=int, default=3, help="Maximum scan depth (default: 3)")
     args = parser.parse_args()
 
     root = Path(args.project_root)

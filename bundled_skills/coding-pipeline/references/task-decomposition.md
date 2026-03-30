@@ -1,97 +1,97 @@
-# 작업 분해 패턴
+# Task Decomposition Patterns
 
-복합 코딩 작업을 하위 작업으로 분해하는 참조 패턴.
+Reference patterns for decomposing complex coding tasks into subtasks.
 
-## 원칙
+## Principles
 
-1. **독립성**: 각 하위 작업은 독립적으로 검증 가능해야 함
-2. **의존성 최소화**: 순환 의존 없이 선형 또는 트리 구조로
-3. **적정 크기**: 하위 작업 하나가 1-3개 파일 수정
-4. **명확한 경계**: 입력과 출력이 명확하게 정의
+1. **Independence**: Each subtask must be independently verifiable
+2. **Minimize dependencies**: Linear or tree structure without circular dependencies
+3. **Appropriate size**: Each subtask modifies 1-3 files
+4. **Clear boundaries**: Inputs and outputs are clearly defined
 
-## 패턴 1: 프론트엔드 기능 추가
-
-```
-T1: 데이터 모델/타입 정의
-    대상: types.ts, models/
-    검증: TypeScript 컴파일 통과
-
-T2: API 클라이언트 함수 작성
-    대상: lib/api/
-    의존성: T1
-    검증: 타입 체크 통과
-
-T3: UI 컴포넌트 구현
-    대상: components/
-    의존성: T1
-    검증: 빌드 통과
-
-T4: 페이지/라우트 통합
-    대상: app/ 또는 pages/
-    의존성: T2, T3
-    검증: 빌드 통과 + 수동 확인
-
-T5: 스타일링 및 반응형
-    대상: 컴포넌트 CSS/클래스
-    의존성: T3, T4
-    검증: 빌드 통과
-```
-
-## 패턴 2: API 엔드포인트 추가
+## Pattern 1: Frontend Feature Addition
 
 ```
-T1: 데이터 모델 정의
-    대상: models/
-    검증: 임포트 테스트
+T1: Define data models/types
+    Target: types.ts, models/
+    Verification: TypeScript compilation passes
 
-T2: 비즈니스 로직 / 서비스 레이어
-    대상: core/ 또는 services/
-    의존성: T1
-    검증: 단위 테스트
+T2: Write API client functions
+    Target: lib/api/
+    Dependencies: T1
+    Verification: Type check passes
 
-T3: API 엔드포인트 구현
-    대상: api/endpoints/
-    의존성: T1, T2
-    검증: 서버 시작 + 라우트 등록 확인
+T3: Implement UI components
+    Target: components/
+    Dependencies: T1
+    Verification: Build passes
 
-T4: 라우터 등록 및 서버 설정
-    대상: server.py 또는 app.py
-    의존성: T3
-    검증: 서버 시작 + /docs 확인
+T4: Page/route integration
+    Target: app/ or pages/
+    Dependencies: T2, T3
+    Verification: Build passes + manual verification
 
-T5: 프론트엔드 연동 (필요시)
-    대상: frontend API client + UI
-    의존성: T3
-    검증: 빌드 통과
+T5: Styling and responsive design
+    Target: Component CSS/classes
+    Dependencies: T3, T4
+    Verification: Build passes
 ```
 
-## 패턴 3: 리팩토링
+## Pattern 2: API Endpoint Addition
 
 ```
-T1: 인터페이스/추상화 설계
-    대상: 새 모듈 파일
-    검증: 타입 체크
+T1: Define data models
+    Target: models/
+    Verification: Import test
 
-T2: 기존 코드를 새 인터페이스로 마이그레이션 (파일별)
-    대상: 각 대상 파일
-    의존성: T1
-    검증: 기존 테스트 통과
+T2: Business logic / service layer
+    Target: core/ or services/
+    Dependencies: T1
+    Verification: Unit tests
 
-T3: 레거시 코드 제거
-    대상: 마이그레이션 완료된 파일
-    의존성: T2 (전체)
-    검증: 전체 테스트 통과
+T3: Implement API endpoints
+    Target: api/endpoints/
+    Dependencies: T1, T2
+    Verification: Server starts + route registration confirmed
 
-T4: 문서/설정 업데이트
-    대상: 설정, README 등
-    의존성: T3
-    검증: 빌드 통과
+T4: Router registration and server configuration
+    Target: server.py or app.py
+    Dependencies: T3
+    Verification: Server starts + /docs check
+
+T5: Frontend integration (if needed)
+    Target: Frontend API client + UI
+    Dependencies: T3
+    Verification: Build passes
 ```
 
-## 분해 시 체크리스트
+## Pattern 3: Refactoring
 
-- [ ] 각 작업이 1-3개 파일만 수정하는가?
-- [ ] 순환 의존이 없는가?
-- [ ] 각 작업의 검증 기준이 명확한가?
-- [ ] 작업 실패 시 롤백 범위가 제한적인가?
-- [ ] 의존 없는 작업끼리 병렬 실행 가능한가?
+```
+T1: Design interfaces/abstractions
+    Target: New module files
+    Verification: Type check
+
+T2: Migrate existing code to new interfaces (per file)
+    Target: Each target file
+    Dependencies: T1
+    Verification: Existing tests pass
+
+T3: Remove legacy code
+    Target: Fully migrated files
+    Dependencies: T2 (all)
+    Verification: Full test suite passes
+
+T4: Update documentation/configuration
+    Target: Config, README, etc.
+    Dependencies: T3
+    Verification: Build passes
+```
+
+## Decomposition Checklist
+
+- [ ] Does each task modify only 1-3 files?
+- [ ] Are there no circular dependencies?
+- [ ] Are verification criteria clear for each task?
+- [ ] Is the rollback scope limited on task failure?
+- [ ] Can tasks without dependencies run in parallel?
