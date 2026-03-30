@@ -67,10 +67,11 @@ class TestResolveApiKey:
         monkeypatch.setenv("GOOGLE_API_KEY", "sk-google")
         assert LLMClient._resolve_api_key("google/gemini-pro") == "sk-google"
 
-    def test_fallback_uses_google_or_openai(self, monkeypatch):
+    def test_unknown_model_returns_none(self, monkeypatch):
+        """Unknown model prefix returns None (no fallback)."""
         monkeypatch.setenv("GOOGLE_API_KEY", "sk-google-fallback")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        assert LLMClient._resolve_api_key("unknown-model") == "sk-google-fallback"
+        assert LLMClient._resolve_api_key("unknown-model") is None
 
 
 # --- _safe_temperature ---
@@ -758,18 +759,21 @@ class TestChatStream:
     """chat_stream content-only path."""
 
     async def test_stream_yields_content(self, llm_client: LLMClient, settings_manager):
-        """chat_stream yields content chunks."""
+        """chat_stream yields typed event dicts for content chunks."""
         chunk1 = MagicMock()
         chunk1.choices = [MagicMock()]
         chunk1.choices[0].delta.content = "Hello"
+        chunk1.choices[0].delta.tool_calls = None
 
         chunk2 = MagicMock()
         chunk2.choices = [MagicMock()]
         chunk2.choices[0].delta.content = " World"
+        chunk2.choices[0].delta.tool_calls = None
 
         chunk3 = MagicMock()
         chunk3.choices = [MagicMock()]
         chunk3.choices[0].delta.content = None  # end chunk
+        chunk3.choices[0].delta.tool_calls = None
 
         async def mock_stream():
             for chunk in [chunk1, chunk2, chunk3]:
@@ -780,13 +784,20 @@ class TestChatStream:
             patch("open_agent.core.llm.acompletion", AsyncMock(return_value=mock_stream())),
             patch.object(llm_client, "_clamp_max_tokens", lambda k, t=None: k),
         ):
-            chunks = []
-            async for text in llm_client.chat_stream(
+            events = []
+            async for event in llm_client.chat_stream(
                 [{"role": "user", "content": "hi"}]
             ):
-                chunks.append(text)
+                events.append(event)
 
-            assert chunks == ["Hello", " World"]
+            # Should have 2 content_delta events + 1 done event
+            content_events = [e for e in events if e["type"] == "content_delta"]
+            assert len(content_events) == 2
+            assert content_events[0]["content"] == "Hello"
+            assert content_events[1]["content"] == " World"
+            done_events = [e for e in events if e["type"] == "done"]
+            assert len(done_events) == 1
+            assert done_events[0]["content"] == "Hello World"
 
 
 # --- get_system_prompt ---

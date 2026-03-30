@@ -2,11 +2,11 @@
 
 import json
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from open_agent.core.memory_manager import MemoryManager, _extract_llm_content
+from open_agent.core.memory_manager import MemoryManager
 from open_agent.models.memory import MemoryItem
 
 
@@ -475,38 +475,6 @@ class TestMemoryEviction:
         assert result is None
 
 
-# --- extract_llm_content helper ---
-
-
-class TestExtractLLMContent:
-    """_extract_llm_content helper tests."""
-
-    def test_extract_normal_content(self):
-        msg = MagicMock()
-        msg.content = "  hello world  "
-        response = MagicMock()
-        response.choices = [MagicMock()]
-        response.choices[0].message = msg
-        assert _extract_llm_content(response) == "hello world"
-
-    def test_extract_reasoning_content_fallback(self):
-        msg = MagicMock()
-        msg.content = None
-        msg.reasoning_content = "  reasoning output  "
-        response = MagicMock()
-        response.choices = [MagicMock()]
-        response.choices[0].message = msg
-        assert _extract_llm_content(response) == "reasoning output"
-
-    def test_extract_both_empty(self):
-        msg = MagicMock()
-        msg.content = ""
-        msg.reasoning_content = None
-        response = MagicMock()
-        response.choices = [MagicMock()]
-        response.choices[0].message = msg
-        assert _extract_llm_content(response) == ""
-
 
 # --- Compression ---
 
@@ -536,19 +504,11 @@ class TestMemoryCompression:
         for i in range(5):
             await memory_manager.create(f"memory {i}")
 
-        mock_msg = MagicMock()
-        mock_msg.content = ""
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
-                AsyncMock(return_value=mock_response),
+                "open_agent.core.llm.LLMClient.simple_completion",
+                AsyncMock(return_value=None),
             ),
         ):
             result = await memory_manager._compress_memories()
@@ -561,19 +521,11 @@ class TestMemoryCompression:
         for i in range(5):
             await memory_manager.create(f"memory {i}")
 
-        mock_msg = MagicMock()
-        mock_msg.content = '{"not": "a list"}'
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
-                AsyncMock(return_value=mock_response),
+                "open_agent.core.llm.LLMClient.simple_completion",
+                AsyncMock(return_value='{"not": "a list"}'),
             ),
         ):
             result = await memory_manager._compress_memories()
@@ -589,7 +541,7 @@ class TestMemoryCompression:
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
+                "open_agent.core.llm.LLMClient.simple_completion",
                 AsyncMock(side_effect=RuntimeError("API error")),
             ),
         ):
@@ -616,14 +568,7 @@ class TestExtractAndSave:
         self, memory_manager: MemoryManager, settings_manager, mock_llm
     ):
         """Returns empty list when LLM returns empty content."""
-        mock_msg = MagicMock()
-        mock_msg.content = ""
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = None
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("hi", "hello")
@@ -637,14 +582,7 @@ class TestExtractAndSave:
             {"content": "User prefers Python", "category": "preference", "confidence": 0.9},
             {"content": "User works on FastAPI project", "category": "context", "confidence": 0.8},
         ])
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("I use Python with FastAPI", "Great!")
@@ -659,14 +597,7 @@ class TestExtractAndSave:
         extracted = json.dumps([
             {"content": "Low confidence memory", "category": "fact", "confidence": 0.3},
         ])
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("test", "test")
@@ -680,14 +611,7 @@ class TestExtractAndSave:
             {"content": "", "category": "fact", "confidence": 0.9},
             {"content": "  ", "category": "fact", "confidence": 0.9},
         ])
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("test", "test")
@@ -700,14 +624,7 @@ class TestExtractAndSave:
         extracted = json.dumps([
             {"content": "Valid memory", "category": "invalid_cat", "confidence": 0.8},
         ])
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("test", "test")
@@ -721,14 +638,7 @@ class TestExtractAndSave:
         extracted = json.dumps([
             {"content": "Memory with bad confidence", "category": "fact", "confidence": "bad"},
         ])
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("test", "test")
@@ -740,14 +650,7 @@ class TestExtractAndSave:
     ):
         """Handles markdown-fenced JSON response from LLM."""
         extracted = '```json\n[{"content": "Memory from fenced", "category": "fact", "confidence": 0.8}]\n```'
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("test", "test")
@@ -758,14 +661,7 @@ class TestExtractAndSave:
         self, memory_manager: MemoryManager, settings_manager, mock_llm
     ):
         """Non-list JSON from LLM returns empty list."""
-        mock_msg = MagicMock()
-        mock_msg.content = '{"single": "object"}'
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = '{"single": "object"}'
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("test", "test")
@@ -797,14 +693,7 @@ class TestExtractAndSave:
                 "confidence": 0.9,
             }
         ])
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("Python 3.13 is great", "Indeed!")
@@ -827,14 +716,7 @@ class TestExtractAndSave:
                 "confidence": 0.6,
             }
         ])
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("Python 3.13", "Ok")
@@ -864,14 +746,7 @@ class TestBatchExtraction:
         extracted = json.dumps([
             {"content": "batch memory", "category": "fact", "confidence": 0.8}
         ])
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save_batch([
@@ -945,19 +820,11 @@ class TestSessionSummary:
         self, memory_manager: MemoryManager, settings_manager
     ):
         """Summary is generated when enough user messages exist."""
-        mock_msg = MagicMock()
-        mock_msg.content = "- Discussed Python\n- Decided on FastAPI"
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
-                AsyncMock(return_value=mock_response),
+                "open_agent.core.llm.LLMClient.simple_completion",
+                AsyncMock(return_value="- Discussed Python\n- Decided on FastAPI"),
             ),
         ):
             messages = [
@@ -979,7 +846,7 @@ class TestSessionSummary:
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
+                "open_agent.core.llm.LLMClient.simple_completion",
                 AsyncMock(side_effect=RuntimeError("LLM down")),
             ),
         ):
@@ -997,19 +864,11 @@ class TestSessionSummary:
         self, memory_manager: MemoryManager, settings_manager
     ):
         """Returns None when LLM returns empty response."""
-        mock_msg = MagicMock()
-        mock_msg.content = ""
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
-                AsyncMock(return_value=mock_response),
+                "open_agent.core.llm.LLMClient.simple_completion",
+                AsyncMock(return_value=None),
             ),
         ):
             messages = [
@@ -1026,19 +885,11 @@ class TestSessionSummary:
         self, memory_manager: MemoryManager, settings_manager
     ):
         """Only user and assistant messages are included in conversation."""
-        mock_msg = MagicMock()
-        mock_msg.content = "- Summary of conversation"
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
-                AsyncMock(return_value=mock_response),
+                "open_agent.core.llm.LLMClient.simple_completion",
+                AsyncMock(return_value="- Summary of conversation"),
             ),
         ):
             messages = [
@@ -1174,19 +1025,11 @@ class TestCompressionSuccess:
             {"source_ids": [all_ids[4]], "content": mems[4].content, "category": "fact", "confidence": 0.7},
         ])
 
-        mock_msg = MagicMock()
-        mock_msg.content = compressed
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
-                AsyncMock(return_value=mock_response),
+                "open_agent.core.llm.LLMClient.simple_completion",
+                AsyncMock(return_value=compressed),
             ),
         ):
             freed = await memory_manager._compress_memories()
@@ -1213,19 +1056,11 @@ class TestCompressionSuccess:
             {"source_ids": [all_ids[4]], "content": "single", "category": "fact", "confidence": 0.7},
         ])
 
-        mock_msg = MagicMock()
-        mock_msg.content = compressed
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
-                AsyncMock(return_value=mock_response),
+                "open_agent.core.llm.LLMClient.simple_completion",
+                AsyncMock(return_value=compressed),
             ),
         ):
             freed = await memory_manager._compress_memories()
@@ -1250,19 +1085,11 @@ class TestCompressionSuccess:
             {"source_ids": ["fake_id"], "content": "bad", "category": "fact", "confidence": 0.7},
         ])
 
-        mock_msg = MagicMock()
-        mock_msg.content = compressed
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
-                AsyncMock(return_value=mock_response),
+                "open_agent.core.llm.LLMClient.simple_completion",
+                AsyncMock(return_value=compressed),
             ),
         ):
             freed = await memory_manager._compress_memories()
@@ -1287,19 +1114,11 @@ class TestCompressionSuccess:
         ])
         fenced = f"```json\n{inner}\n```"
 
-        mock_msg = MagicMock()
-        mock_msg.content = fenced
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
             patch(
-                "open_agent.core.memory_manager.acompletion",
-                AsyncMock(return_value=mock_response),
+                "open_agent.core.llm.LLMClient.simple_completion",
+                AsyncMock(return_value=fenced),
             ),
         ):
             freed = await memory_manager._compress_memories()
@@ -1326,14 +1145,7 @@ class TestCapacityEviction:
         extracted = json.dumps([
             {"content": "new memory from extraction", "category": "fact", "confidence": 0.9}
         ])
-        mock_msg = MagicMock()
-        mock_msg.content = extracted
-        mock_msg.reasoning_content = None
-        mock_choice = MagicMock()
-        mock_choice.message = mock_msg
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.extract_and_save("test", "test")
