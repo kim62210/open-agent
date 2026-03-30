@@ -2,22 +2,20 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
-from httpx import AsyncClient
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from open_agent.api.endpoints import settings as settings_router
+from open_agent.core.settings_manager import settings_manager as _stm
+from open_agent.models.settings import AppSettings
+
+from core.auth.dependencies import get_current_user
 
 
 @pytest.fixture()
 async def settings_client(_patch_db_factory, monkeypatch):
     """httpx.AsyncClient wired to settings router with mocked settings_manager."""
-    import httpx
-    from httpx import ASGITransport
-
-    from fastapi import FastAPI
-    from core.auth.dependencies import get_current_user
-    from open_agent.api.endpoints import settings as settings_router
-    from open_agent.core.settings_manager import settings_manager as _stm
-    from open_agent.models.settings import AppSettings, LLMSettings, ProfileSettings, ThemeSettings
-
     _DEFAULT = {
         "llm": {
             "model": "gemini/gemini-2.0-flash",
@@ -197,9 +195,7 @@ class TestHealthCheck:
         from open_agent.core.settings_manager import settings_manager as _stm
 
         _stm._settings.llm.api_key = "sk-test"
-        with patch(
-            "open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock
-        ) as mock_ac:
+        with patch("open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock):
             with patch("open_agent.api.endpoints.settings.LLMClient") as mock_llm:
                 mock_llm._resolve_api_key = MagicMock(return_value="sk-test")
                 resp = await settings_client.get("/api/settings/health")
@@ -207,6 +203,25 @@ class TestHealthCheck:
         data = resp.json()
         assert data["server"] == "ok"
         assert data["llm_connected"] is True
+
+
+class TestReadiness:
+    async def test_readiness_reports_component_checks(self, settings_client: AsyncClient):
+        with patch("open_agent.api.endpoints.settings.settings_manager") as mock_settings:
+            with patch("open_agent.api.endpoints.settings.mcp_manager") as mock_mcp:
+                with patch("open_agent.api.endpoints.settings.job_scheduler") as mock_scheduler:
+                    mock_settings._initialized = True
+                    mock_mcp._configs = {"srv": object()}
+                    mock_scheduler._task = MagicMock()
+                    mock_scheduler._task.done.return_value = False
+                    resp = await settings_client.get("/api/settings/readiness")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ready"] is True
+        assert data["checks"]["settings_loaded"] is True
+        assert data["checks"]["mcp_config_loaded"] is True
+        assert data["checks"]["job_scheduler_running"] is True
 
 
 class TestValidateModel:
@@ -324,9 +339,7 @@ class TestHealthCheckExtended:
         _stm._settings.llm.api_base = "http://localhost:11434"
         with patch("open_agent.api.endpoints.settings.LLMClient") as mock_llm:
             mock_llm._resolve_api_key = MagicMock(return_value=None)
-            with patch(
-                "open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock
-            ) as mock_ac:
+            with patch("open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock):
                 resp = await settings_client.get("/api/settings/health")
         assert resp.status_code == 200
         data = resp.json()
@@ -338,9 +351,7 @@ class TestValidateModelExtended:
 
     async def test_validate_model_with_api_base(self, settings_client: AsyncClient):
         """Validate model with custom api_base."""
-        with patch(
-            "open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock
-        ) as mock_ac:
+        with patch("open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock):
             with patch("open_agent.api.endpoints.settings.LLMClient") as mock_llm:
                 mock_llm._resolve_api_key = MagicMock(return_value=None)
                 resp = await settings_client.post(
@@ -378,7 +389,7 @@ class TestDiscoverModels:
         with patch(
             "open_agent.api.endpoints.settings._discover_provider",
             return_value=[{"id": "openai/gpt-4", "name": "gpt-4"}],
-        ) as mock_disc:
+        ):
             resp = await settings_client.get(
                 "/api/settings/models/discover", params={"provider": "openai"}
             )
@@ -389,9 +400,7 @@ class TestDiscoverModels:
 
     async def test_discover_all_providers(self, settings_client: AsyncClient):
         """Discover models from all providers."""
-        with patch(
-            "open_agent.api.endpoints.settings._discover_provider", return_value=[]
-        ) as mock_disc:
+        with patch("open_agent.api.endpoints.settings._discover_provider", return_value=[]):
             resp = await settings_client.get("/api/settings/models/discover")
         assert resp.status_code == 200
         assert "providers" in resp.json()

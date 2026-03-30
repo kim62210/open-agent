@@ -8,16 +8,25 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from litellm import acompletion
-
-from core.auth.dependencies import require_admin, require_any, require_user
-
 from open_agent import __version__
-from open_agent.core.settings_manager import settings_manager
+from open_agent.core.job_scheduler import job_scheduler
 from open_agent.core.llm import LLMClient
+from open_agent.core.mcp_manager import mcp_manager
+from open_agent.core.settings_manager import settings_manager
 from open_agent.models.memory import MemorySettings
+from open_agent.models.settings import (
+    CustomModel,
+    LLMSettings,
+    ProfileSettings,
+    ThemeSettings,
+    UpdateLLMRequest,
+    UpdateMemorySettingsRequest,
+    UpdateProfileRequest,
+    UpdateThemeRequest,
+)
 from pydantic import BaseModel as PydanticBaseModel
 
-from open_agent.models.settings import CustomModel, LLMSettings, ProfileSettings, ThemeSettings, UpdateLLMRequest, UpdateMemorySettingsRequest, UpdateProfileRequest, UpdateThemeRequest
+from core.auth.dependencies import require_admin, require_any, require_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -37,7 +46,10 @@ def _fetch_version_sync() -> dict:
         try:
             req = urllib.request.Request(
                 "https://api.github.com/repos/EJCHO-salary/track_platform/releases?per_page=20",
-                headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {gh_token}"},
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "Authorization": f"Bearer {gh_token}",
+                },
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 releases = json.loads(resp.read().decode())
@@ -121,6 +133,17 @@ async def health_check():
     return result
 
 
+@router.get("/readiness")
+async def readiness_check():
+    scheduler_task = getattr(job_scheduler, "_task", None)
+    checks = {
+        "settings_loaded": getattr(settings_manager, "_initialized", False),
+        "mcp_config_loaded": bool(getattr(mcp_manager, "_configs", {})),
+        "job_scheduler_running": bool(scheduler_task) and not scheduler_task.done(),
+    }
+    return {"ready": all(checks.values()), "checks": checks}
+
+
 @router.get("/llm", response_model=LLMSettings)
 async def get_llm_settings(current_user: Annotated[dict, Depends(require_any)]):
     # api_key를 응답에서 마스킹
@@ -131,7 +154,9 @@ async def get_llm_settings(current_user: Annotated[dict, Depends(require_any)]):
 
 
 @router.patch("/llm", response_model=LLMSettings)
-async def update_llm_settings(req: UpdateLLMRequest, current_user: Annotated[dict, Depends(require_admin)]):
+async def update_llm_settings(
+    req: UpdateLLMRequest, current_user: Annotated[dict, Depends(require_admin)]
+):
     updated = await settings_manager.update_llm(**req.model_dump(exclude_unset=True))
     # api_key를 응답에서 마스킹
     result = updated.model_copy()
@@ -146,7 +171,9 @@ async def get_memory_settings(current_user: Annotated[dict, Depends(require_any)
 
 
 @router.patch("/memory", response_model=MemorySettings)
-async def update_memory_settings(req: UpdateMemorySettingsRequest, current_user: Annotated[dict, Depends(require_admin)]):
+async def update_memory_settings(
+    req: UpdateMemorySettingsRequest, current_user: Annotated[dict, Depends(require_admin)]
+):
     return await settings_manager.update_memory(**req.model_dump(exclude_unset=True))
 
 
@@ -156,7 +183,9 @@ async def get_profile(current_user: Annotated[dict, Depends(require_any)]):
 
 
 @router.patch("/profile", response_model=ProfileSettings)
-async def update_profile(req: UpdateProfileRequest, current_user: Annotated[dict, Depends(require_any)]):
+async def update_profile(
+    req: UpdateProfileRequest, current_user: Annotated[dict, Depends(require_any)]
+):
     return await settings_manager.update_profile(**req.model_dump(exclude_unset=True))
 
 
@@ -166,11 +195,14 @@ async def get_theme(current_user: Annotated[dict, Depends(require_any)]):
 
 
 @router.patch("/theme", response_model=ThemeSettings)
-async def update_theme(req: UpdateThemeRequest, current_user: Annotated[dict, Depends(require_any)]):
+async def update_theme(
+    req: UpdateThemeRequest, current_user: Annotated[dict, Depends(require_any)]
+):
     return await settings_manager.update_theme(**req.model_dump(exclude_unset=True))
 
 
 # --- Validate Model ---
+
 
 class ValidateModelRequest(PydanticBaseModel):
     model: str
@@ -179,7 +211,9 @@ class ValidateModelRequest(PydanticBaseModel):
 
 
 @router.post("/validate-model")
-async def validate_model(req: ValidateModelRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def validate_model(
+    req: ValidateModelRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     """LiteLLM으로 모델 호출 가능 여부 검증"""
     api_key = req.api_key or LLMClient._resolve_api_key(req.model)
 
@@ -207,6 +241,7 @@ async def validate_model(req: ValidateModelRequest, current_user: Annotated[dict
 
 # --- Custom Models CRUD ---
 
+
 @router.get("/custom-models", response_model=list[CustomModel])
 async def get_custom_models(current_user: Annotated[dict, Depends(require_any)]):
     return settings_manager.custom_models
@@ -219,7 +254,9 @@ class AddCustomModelRequest(PydanticBaseModel):
 
 
 @router.post("/custom-models", response_model=list[CustomModel])
-async def add_custom_model(req: AddCustomModelRequest, current_user: Annotated[dict, Depends(require_admin)]):
+async def add_custom_model(
+    req: AddCustomModelRequest, current_user: Annotated[dict, Depends(require_admin)]
+):
     return await settings_manager.add_custom_model(req.label, req.model, req.provider)
 
 
@@ -279,11 +316,13 @@ def _fetch_openai_compatible(url: str, api_key: str, prefix: str) -> list[dict]:
         model_id = m.get("id", "")
         if not model_id:
             continue
-        models.append({
-            "id": f"{prefix}{model_id}",
-            "name": model_id,
-            "created": m.get("created"),
-        })
+        models.append(
+            {
+                "id": f"{prefix}{model_id}",
+                "name": model_id,
+                "created": m.get("created"),
+            }
+        )
     models.sort(key=lambda x: x.get("created") or 0, reverse=True)
     return models
 
@@ -305,10 +344,12 @@ def _fetch_google_models(api_key: str) -> list[dict]:
         methods = m.get("supportedGenerationMethods", [])
         if "generateContent" not in methods:
             continue
-        models.append({
-            "id": f"gemini/{model_id}",
-            "name": display,
-        })
+        models.append(
+            {
+                "id": f"gemini/{model_id}",
+                "name": display,
+            }
+        )
     return models
 
 
@@ -330,11 +371,13 @@ def _fetch_anthropic_models(api_key: str) -> list[dict]:
         display = m.get("display_name", model_id)
         if not model_id:
             continue
-        models.append({
-            "id": f"anthropic/{model_id}",
-            "name": display,
-            "created": m.get("created_at"),
-        })
+        models.append(
+            {
+                "id": f"anthropic/{model_id}",
+                "name": display,
+                "created": m.get("created_at"),
+            }
+        )
     return models
 
 
@@ -361,9 +404,7 @@ def _discover_provider(provider: str) -> list[dict]:
         elif provider == "anthropic":
             models = _fetch_anthropic_models(api_key)
         else:
-            models = _fetch_openai_compatible(
-                config["url"], api_key, config["prefix"]
-            )
+            models = _fetch_openai_compatible(config["url"], api_key, config["prefix"])
 
         _model_cache[provider] = (now, models)
         logger.info("Discovered %d models from %s", len(models), provider)
@@ -377,7 +418,9 @@ def _discover_provider(provider: str) -> list[dict]:
 
 
 @router.get("/models/discover")
-async def discover_models(current_user: Annotated[dict, Depends(require_user)], provider: str | None = None):
+async def discover_models(
+    current_user: Annotated[dict, Depends(require_user)], provider: str | None = None
+):
     """API 키가 설정된 프로바이더에서 사용 가능한 모델 목록을 동적으로 조회합니다.
 
     - provider 지정 시 해당 프로바이더만, 생략 시 전체 조회
@@ -389,9 +432,7 @@ async def discover_models(current_user: Annotated[dict, Depends(require_user)], 
 
     # 전체 프로바이더 병렬 조회
     providers = list(_PROVIDER_APIS.keys())
-    results = await asyncio.gather(
-        *(asyncio.to_thread(_discover_provider, p) for p in providers)
-    )
+    results = await asyncio.gather(*(asyncio.to_thread(_discover_provider, p) for p in providers))
     return {
-        "providers": {p: models for p, models in zip(providers, results) if models}
+        "providers": {p: models for p, models in zip(providers, results, strict=False) if models}
     }

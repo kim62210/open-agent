@@ -3,7 +3,6 @@
 import os
 from unittest.mock import patch
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 
@@ -40,9 +39,7 @@ class TestBuildDatabaseUrl:
         """Non-postgres URLs are passed through unchanged."""
         from core.db.engine import _build_database_url
 
-        with patch.dict(
-            os.environ, {"DATABASE_URL": "mysql+asyncmy://user:pass@host/db"}
-        ):
+        with patch.dict(os.environ, {"DATABASE_URL": "mysql+asyncmy://user:pass@host/db"}):
             url = _build_database_url()
         assert url == "mysql+asyncmy://user:pass@host/db"
 
@@ -100,7 +97,6 @@ class TestInitDb:
         """init_db() runs without error using in-memory SQLite."""
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        from core.db.base import Base
         from core.db.models import register_all_models
 
         register_all_models()
@@ -126,6 +122,40 @@ class TestInitDb:
             assert "memories" in tables
 
         await test_engine.dispose()
+
+    async def test_init_db_skips_create_all_outside_dev(self):
+        from contextlib import asynccontextmanager
+
+        from core.db.engine import init_db
+
+        class FakeConn:
+            def __init__(self):
+                self.run_sync_called = False
+
+            async def execute(self, *_args, **_kwargs):
+                return None
+
+            async def run_sync(self, _fn):
+                self.run_sync_called = True
+
+        fake_conn = FakeConn()
+
+        class FakeEngine:
+            url = "sqlite+aiosqlite://"
+
+            @asynccontextmanager
+            async def begin(self):
+                yield fake_conn
+
+        fake_engine = FakeEngine()
+
+        with patch.dict(
+            os.environ, {"OPEN_AGENT_DEV": "0", "OPEN_AGENT_BOOTSTRAP_SCHEMA": "0"}, clear=False
+        ):
+            with patch("core.db.engine.engine", fake_engine):
+                await init_db()
+
+        assert fake_conn.run_sync_called is False
 
 
 class TestCloseDb:

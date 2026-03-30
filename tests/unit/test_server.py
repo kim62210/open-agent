@@ -11,13 +11,8 @@ from httpx import AsyncClient
 async def server_client():
     """httpx.AsyncClient using the real app but with mocked lifespan."""
     import httpx
-    from httpx import ASGITransport
-
     from fastapi import FastAPI
-    from fastapi.responses import JSONResponse
-
-    from core.auth.dependencies import get_current_user
-    from open_agent.server import _register_exception_handlers
+    from httpx import ASGITransport
     from open_agent.core.exceptions import (
         AlreadyExistsError,
         InvalidPathError,
@@ -32,12 +27,20 @@ async def server_client():
         PermissionDeniedError,
         StorageLimitError,
     )
+    from open_agent.server import _register_exception_handlers
+
+    from core.auth.dependencies import get_current_user
 
     test_app = FastAPI()
     _register_exception_handlers(test_app)
 
     async def _fake_current_user() -> dict:
-        return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "admin"}
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "testuser",
+            "role": "admin",
+        }
 
     test_app.dependency_overrides[get_current_user] = _fake_current_user
 
@@ -218,10 +221,20 @@ class TestServerApp:
 
         route_paths = [r.path for r in app.routes if hasattr(r, "path")]
         # Check that key API routes exist
-        prefix_checks = ["/api/auth", "/api/chat", "/api/mcp", "/api/skills",
-                         "/api/pages", "/api/settings", "/api/sessions",
-                         "/api/memory", "/api/workspace", "/api/jobs",
-                         "/api/sandbox", "/api/host-info"]
+        prefix_checks = [
+            "/api/auth",
+            "/api/chat",
+            "/api/mcp",
+            "/api/skills",
+            "/api/pages",
+            "/api/settings",
+            "/api/sessions",
+            "/api/memory",
+            "/api/workspace",
+            "/api/jobs",
+            "/api/sandbox",
+            "/api/host-info",
+        ]
         for prefix in prefix_checks:
             found = any(prefix in path for path in route_paths)
             assert found, f"Expected route prefix {prefix} not found in app routes"
@@ -247,8 +260,8 @@ class TestServerHostInfo:
     async def test_host_info_no_expose(self):
         """Returns expose=false when OPEN_AGENT_EXPOSE not set."""
         import httpx
-        from httpx import ASGITransport
         from fastapi import FastAPI
+        from httpx import ASGITransport
 
         test_app = FastAPI()
 
@@ -279,7 +292,7 @@ class TestServerInjectBase:
         html = "<html><head><title>Test</title></head><body></body></html>"
         result = _inject_base(html, "/hosted/page1/")
         assert '<base href="/hosted/page1/">' in result
-        assert result.index('<base href') > result.index("<head>")
+        assert result.index("<base href") > result.index("<head>")
 
     def test_inject_base_without_head(self):
         """Injects <base> tag at start if no <head> found."""
@@ -349,9 +362,9 @@ class TestHostedDirectory:
     async def test_no_published_pages(self):
         """Returns empty state HTML when no pages published."""
         import httpx
-        from httpx import ASGITransport
         from fastapi import FastAPI
         from fastapi.responses import HTMLResponse
+        from httpx import ASGITransport
 
         test_app = FastAPI()
 
@@ -373,12 +386,13 @@ class TestHostedDirectory:
 
     async def test_with_published_pages(self):
         """Returns directory HTML when pages exist."""
+        import html as html_lib
+        from unittest.mock import MagicMock
+
         import httpx
-        from httpx import ASGITransport
         from fastapi import FastAPI
         from fastapi.responses import HTMLResponse
-        from unittest.mock import MagicMock
-        import html as html_lib
+        from httpx import ASGITransport
 
         test_app = FastAPI()
 
@@ -397,11 +411,11 @@ class TestHostedDirectory:
             for p in published:
                 lock = ""
                 if p.host_password_hash:
-                    lock = ' <span>locked</span>'
+                    lock = " <span>locked</span>"
                 href = f"/hosted/{p.id}"
                 items += f'<a href="{href}">{html_lib.escape(p.name)}{lock}</a>'
                 if p.description:
-                    items += f'<small>{html_lib.escape(p.description)}</small>'
+                    items += f"<small>{html_lib.escape(p.description)}</small>"
 
             html = f"<h1>Hosted Pages</h1>{items}"
             return HTMLResponse(content=html)
@@ -424,13 +438,97 @@ class TestLifespan:
 
     async def test_lifespan_runs(self):
         """lifespan function is an async context manager."""
-        from open_agent.server import lifespan
 
         # Verify it's an async context manager factory
-        from contextlib import asynccontextmanager
-        import inspect
+
+        from open_agent.server import lifespan
 
         assert callable(lifespan)
+
+    async def test_lifespan_does_not_import_gh_token_outside_dev(self):
+        import sys
+        from pathlib import Path
+
+        from fastapi import FastAPI
+
+        mock_agent_mod = MagicMock()
+        mock_agent_mod.orchestrator = MagicMock()
+        already_loaded = "open_agent.core.agent" in sys.modules
+        if not already_loaded:
+            sys.modules["open_agent.core.agent"] = mock_agent_mod
+
+        from open_agent.server import lifespan
+
+        class DummyManager:
+            async def load_from_db(self):
+                return None
+
+            async def start(self):
+                return None
+
+            async def stop(self):
+                return None
+
+            async def connect_all(self):
+                return None
+
+            async def disconnect_all(self):
+                return None
+
+            async def load_disabled_from_db(self):
+                return None
+
+            def set_bundled_dir(self, _path):
+                return None
+
+            def discover_skills(self, _paths):
+                return None
+
+            def init_pages_dir(self, _path):
+                return None
+
+        with patch.dict(
+            os.environ, {"OPEN_AGENT_DEV": "0", "GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False
+        ):
+            with patch("open_agent.config.init_data_dir") as mock_data_dir:
+                mock_data_dir.return_value = Path("/tmp/open-agent-test")
+                with patch("core.db.engine.init_db", new_callable=AsyncMock):
+                    with patch("core.db.migrate.migrate_json_to_db", new_callable=AsyncMock):
+                        with patch("open_agent.server.settings_manager", DummyManager()):
+                            with patch("open_agent.server.mcp_manager", DummyManager()):
+                                with patch("open_agent.server.skill_manager", DummyManager()):
+                                    with patch("open_agent.server.page_manager", DummyManager()):
+                                        with patch(
+                                            "open_agent.server.session_manager", DummyManager()
+                                        ):
+                                            with patch(
+                                                "open_agent.server.memory_manager", DummyManager()
+                                            ):
+                                                with patch(
+                                                    "open_agent.server.workspace_manager",
+                                                    DummyManager(),
+                                                ):
+                                                    with patch(
+                                                        "open_agent.server.job_manager",
+                                                        DummyManager(),
+                                                    ):
+                                                        with patch(
+                                                            "open_agent.server.job_scheduler",
+                                                            DummyManager(),
+                                                        ):
+                                                            with patch(
+                                                                "core.db.engine.close_db",
+                                                                new_callable=AsyncMock,
+                                                            ):
+                                                                with patch(
+                                                                    "subprocess.run"
+                                                                ) as mock_run:
+                                                                    async with lifespan(FastAPI()):
+                                                                        pass
+
+        mock_run.assert_not_called()
+        if not already_loaded:
+            sys.modules.pop("open_agent.core.agent", None)
 
 
 class TestHostInfoEndpoint:
@@ -439,8 +537,8 @@ class TestHostInfoEndpoint:
     async def test_host_info_default(self):
         """host_info returns correct defaults."""
         import httpx
-        from httpx import ASGITransport
         from fastapi import FastAPI
+        from httpx import ASGITransport
 
         # Replicate the actual endpoint logic
         test_app = FastAPI()
@@ -464,8 +562,8 @@ class TestHostInfoEndpoint:
     async def test_host_info_exposed(self):
         """host_info returns expose=true when set."""
         import httpx
-        from httpx import ASGITransport
         from fastapi import FastAPI
+        from httpx import ASGITransport
 
         test_app = FastAPI()
 

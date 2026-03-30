@@ -87,6 +87,10 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+def _should_auto_import_gh_token() -> bool:
+    return os.environ.get("OPEN_AGENT_DEV") == "1"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 데이터 디렉토리 자동 초기화 (init 없이도 start만으로 동작)
@@ -98,7 +102,11 @@ async def lifespan(app: FastAPI):
         load_dotenv(env_path)
 
     # GITHUB_TOKEN 자동 설정 (gh CLI 로그인 상태에서 가져옴)
-    if not os.environ.get("GITHUB_TOKEN") and not os.environ.get("GH_TOKEN"):
+    if (
+        _should_auto_import_gh_token()
+        and not os.environ.get("GITHUB_TOKEN")
+        and not os.environ.get("GH_TOKEN")
+    ):
         try:
             import subprocess
 

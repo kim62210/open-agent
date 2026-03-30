@@ -25,3 +25,15 @@ class RunDetail(BaseModel):
     updated_at: str
     finished_at: str | None = None
     events: list[RunEvent] = Field(default_factory=list)
+
+
+class RunStatus(BaseModel):
+    id: str
+    status: str
+    finished_at: str | None = None
+    error_message: str | None = None
+
+
+class AsyncRunAccepted(BaseModel):
+    run_id: str
+    status: str

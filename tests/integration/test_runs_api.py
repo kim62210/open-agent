@@ -77,3 +77,29 @@ class TestGetRun:
             resp = await runs_client.get("/api/runs/missing")
 
         assert resp.status_code == 404
+
+
+class TestRunControls:
+    async def test_get_run_status(self, runs_client: AsyncClient):
+        with patch("open_agent.api.endpoints.runs.run_manager") as mock_rm:
+            mock_rm.get_run_status = AsyncMock(
+                return_value={"id": "run-1", "status": "running", "finished_at": None}
+            )
+            resp = await runs_client.get("/api/runs/run-1/status")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "running"
+
+    async def test_abort_run(self, runs_client: AsyncClient):
+        with patch("open_agent.api.endpoints.runs.run_manager") as mock_rm:
+            mock_rm.abort_run = AsyncMock(
+                return_value={
+                    "id": "run-1",
+                    "status": "cancelled",
+                    "finished_at": "2026-03-30T00:00:01+00:00",
+                }
+            )
+            resp = await runs_client.post("/api/runs/run-1/abort")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "cancelled"

@@ -3,8 +3,11 @@
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
-from httpx import AsyncClient
+from fastapi import FastAPI, Request
+from httpx import ASGITransport, AsyncClient
+from open_agent.api.middleware import RequestLoggingMiddleware
 
 
 @pytest.fixture()
@@ -131,6 +134,24 @@ class TestChatEndpoint:
             )
         assert resp.status_code == 200
 
+    async def test_async_chat_returns_run_stub(self, chat_client: AsyncClient):
+        with patch("open_agent.api.endpoints.chat.run_manager") as mock_rm:
+            mock_rm.create_run = AsyncMock(
+                return_value=MagicMock(id="run-async-1", status="running")
+            )
+            mock_rm.append_event = AsyncMock()
+            mock_rm.register_background_task = MagicMock()
+            resp = await chat_client.post(
+                "/api/chat/async",
+                json={"messages": [{"role": "user", "content": "Hi async"}]},
+            )
+
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["run_id"] == "run-async-1"
+        assert data["status"] == "running"
+        mock_rm.register_background_task.assert_called_once()
+
 
 class TestChatStreamEndpoint:
     """POST /api/chat/stream"""
@@ -228,3 +249,20 @@ class TestChatHelpers:
         from open_agent.api.endpoints.chat import _safe_get_content
 
         assert _safe_get_content({}) == ""
+
+
+class TestRequestLoggingMiddleware:
+    async def test_middleware_sets_request_state_request_id(self):
+        app = FastAPI()
+        app.add_middleware(RequestLoggingMiddleware)
+
+        @app.get("/request-id")
+        async def request_id(request: Request) -> dict:
+            return {"request_id": getattr(request.state, "request_id", None)}
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/request-id")
+
+        assert resp.status_code == 200
+        assert resp.json()["request_id"]

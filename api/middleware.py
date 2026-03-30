@@ -1,4 +1,5 @@
 """FastAPI 미들웨어."""
+
 import time
 import uuid
 
@@ -15,6 +16,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = uuid.uuid4().hex[:8]
+        request.state.request_id = request_id
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id)
 
