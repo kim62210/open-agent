@@ -174,3 +174,118 @@ class TestGetJobHistory:
             mock_jm.get_job.return_value = None
             resp = await jobs_client.get("/api/jobs/nonexistent/history")
         assert resp.status_code == 404
+
+
+class TestUpdateJob:
+    """PATCH /api/jobs/{job_id}"""
+
+    async def test_update_job(self, jobs_client: AsyncClient):
+        """Updates job name and prompt."""
+        updated = _make_job_info(name="Updated Job")
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+                with patch("open_agent.api.endpoints.jobs.validate_job_prompt", return_value=None):
+                    mock_jm.update_job = AsyncMock(return_value=updated)
+                    mock_sched.refresh_job = MagicMock()
+                    resp = await jobs_client.patch(
+                        "/api/jobs/job-1",
+                        json={"name": "Updated Job", "prompt": "Updated prompt"},
+                    )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Updated Job"
+
+    async def test_update_job_not_found(self, jobs_client: AsyncClient):
+        """Returns 404 for non-existent job."""
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+                with patch("open_agent.api.endpoints.jobs.validate_job_prompt", return_value=None):
+                    mock_jm.update_job = AsyncMock(return_value=None)
+                    resp = await jobs_client.patch(
+                        "/api/jobs/nonexistent",
+                        json={"name": "New Name"},
+                    )
+        assert resp.status_code == 404
+
+    async def test_update_job_invalid_prompt(self, jobs_client: AsyncClient):
+        """Returns 400 when updated prompt is invalid."""
+        with patch("open_agent.api.endpoints.jobs.validate_job_prompt", return_value="Prompt too short"):
+            resp = await jobs_client.patch(
+                "/api/jobs/job-1",
+                json={"prompt": "x"},
+            )
+        assert resp.status_code == 400
+        assert "Prompt too short" in resp.json()["detail"]
+
+    async def test_update_job_without_prompt(self, jobs_client: AsyncClient):
+        """Updates job without changing prompt skips validation."""
+        updated = _make_job_info(name="Name Only")
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+                mock_jm.update_job = AsyncMock(return_value=updated)
+                mock_sched.refresh_job = MagicMock()
+                resp = await jobs_client.patch(
+                    "/api/jobs/job-1",
+                    json={"name": "Name Only"},
+                )
+        assert resp.status_code == 200
+
+
+class TestStopJob:
+    """POST /api/jobs/{job_id}/stop"""
+
+    async def test_stop_job(self, jobs_client: AsyncClient):
+        """Stops a running job."""
+        with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+            mock_sched.stop_job = AsyncMock()
+            resp = await jobs_client.post("/api/jobs/job-1/stop")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "stopping"
+
+
+class TestDeleteJobExtended:
+    """Extended delete job tests."""
+
+    async def test_delete_running_job_stops_first(self, jobs_client: AsyncClient):
+        """Deleting a running job stops it before deletion."""
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+                mock_sched.is_running.return_value = True
+                mock_sched.stop_job = AsyncMock()
+                mock_jm.delete_job = AsyncMock(return_value=True)
+                resp = await jobs_client.delete("/api/jobs/job-1")
+        assert resp.status_code == 200
+        mock_sched.stop_job.assert_called_once_with("job-1")
+
+
+class TestCreateJobExtended:
+    """Extended create job tests."""
+
+    async def test_create_job_with_schedule(self, jobs_client: AsyncClient):
+        """Creates a scheduled job."""
+        job = _make_job_info()
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+                with patch("open_agent.api.endpoints.jobs.validate_job_prompt", return_value=None):
+                    mock_jm.create_job = AsyncMock(return_value=job)
+                    mock_sched.refresh_job = MagicMock()
+                    resp = await jobs_client.post(
+                        "/api/jobs/",
+                        json={
+                            "name": "Scheduled Job",
+                            "prompt": "Run daily task",
+                            "schedule_type": "daily",
+                            "schedule_config": {"hour": 9, "minute": 0},
+                        },
+                    )
+        assert resp.status_code == 200
+
+    async def test_create_job_exception(self, jobs_client: AsyncClient):
+        """Returns 400 when job creation raises exception."""
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.validate_job_prompt", return_value=None):
+                mock_jm.create_job = AsyncMock(side_effect=ValueError("Invalid schedule"))
+                resp = await jobs_client.post(
+                    "/api/jobs/",
+                    json={"name": "Bad Job", "prompt": "Do something"},
+                )
+        assert resp.status_code == 400

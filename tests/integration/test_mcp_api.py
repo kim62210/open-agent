@@ -213,3 +213,136 @@ class TestReloadConfig:
             resp = await mcp_client.post("/api/mcp/reload")
         assert resp.status_code == 200
         assert resp.json()["servers"] == 1
+
+
+class TestUpdateServer:
+    """PATCH /api/mcp/servers/{name}"""
+
+    async def test_update_server(self, mcp_client: AsyncClient):
+        """Updates server config."""
+        info = _make_server_info()
+        config_mock = MagicMock()
+        config_mock.model_dump.return_value = {"transport": "stdio", "command": "echo", "enabled": True}
+        config_mock.enabled = True
+        configs = {"test-server": config_mock}
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            type(mock_mm)._configs = property(lambda self: configs)
+            mock_mm._connections = {}
+            mock_mm.update_server_config = AsyncMock()
+            mock_mm.connect_server = AsyncMock()
+            mock_mm.get_server_status.return_value = info
+            resp = await mcp_client.patch(
+                "/api/mcp/servers/test-server",
+                json={"command": "cat"},
+            )
+        assert resp.status_code == 200
+
+    async def test_update_server_not_found(self, mcp_client: AsyncClient):
+        """Returns 404 for non-existent server update."""
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            type(mock_mm)._configs = property(lambda self: {})
+            resp = await mcp_client.patch(
+                "/api/mcp/servers/nonexistent",
+                json={"command": "cat"},
+            )
+        assert resp.status_code == 404
+
+    async def test_update_server_disable(self, mcp_client: AsyncClient):
+        """Disabling a server disconnects it."""
+        info = _make_server_info(status="disconnected")
+        config_mock = MagicMock()
+        config_mock.model_dump.return_value = {"transport": "stdio", "command": "echo", "enabled": True}
+        disabled_config = MagicMock()
+        disabled_config.enabled = False
+        configs = {"test-server": config_mock}
+
+        def _update_side_effect(name, updates):
+            configs["test-server"] = disabled_config
+
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            type(mock_mm)._configs = property(lambda self: configs)
+            mock_mm._connections = {"test-server": MagicMock()}
+            mock_mm.update_server_config = AsyncMock(side_effect=_update_side_effect)
+            mock_mm.disconnect_server = AsyncMock()
+            mock_mm.get_server_status.return_value = info
+            resp = await mcp_client.patch(
+                "/api/mcp/servers/test-server",
+                json={"enabled": False},
+            )
+        assert resp.status_code == 200
+
+
+class TestUpdateConfig:
+    """PUT /api/mcp/config"""
+
+    async def test_update_config(self, mcp_client: AsyncClient):
+        """Overwrites full MCP config."""
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            mock_mm._configs = {}
+            mock_mm.remove_server_config = AsyncMock()
+            mock_mm.add_server_config = AsyncMock()
+            mock_mm.reload_config = AsyncMock()
+            mock_mm.get_raw_config.return_value = {"mcpServers": {"new-server": {"transport": "stdio", "command": "echo"}}}
+            resp = await mcp_client.put(
+                "/api/mcp/config",
+                json={"mcpServers": {"new-server": {"transport": "stdio", "command": "echo"}}},
+            )
+        assert resp.status_code == 200
+        assert "mcpServers" in resp.json()
+
+
+class TestConnectDisconnectExtended:
+    """Extended connection control tests."""
+
+    async def test_disconnect_nonexistent_returns_404(self, mcp_client: AsyncClient):
+        """Disconnect from non-existent server returns 404."""
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            mock_mm._configs = {}
+            resp = await mcp_client.post("/api/mcp/servers/nonexistent/disconnect")
+        assert resp.status_code == 404
+
+    async def test_restart_nonexistent_returns_404(self, mcp_client: AsyncClient):
+        """Restart non-existent server returns 404."""
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            mock_mm._configs = {}
+            resp = await mcp_client.post("/api/mcp/servers/nonexistent/restart")
+        assert resp.status_code == 404
+
+
+class TestListServerTools:
+    """GET /api/mcp/tools/{server_name}"""
+
+    async def test_list_server_tools(self, mcp_client: AsyncClient):
+        """Returns tools from a specific server."""
+        from open_agent.models.mcp import MCPToolInfo
+        tool = MCPToolInfo(name="read_file", description="Read a file", input_schema={}, server_name="test-server")
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            mock_mm._configs = {"test-server": MagicMock()}
+            mock_mm.get_tools_for_server = AsyncMock(return_value=[tool])
+            resp = await mcp_client.get("/api/mcp/tools/test-server")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["name"] == "read_file"
+
+    async def test_list_server_tools_not_found(self, mcp_client: AsyncClient):
+        """Returns 404 for non-existent server tools."""
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            mock_mm._configs = {}
+            resp = await mcp_client.get("/api/mcp/tools/nonexistent")
+        assert resp.status_code == 404
+
+
+class TestListAllToolsExtended:
+    """Extended tool listing tests."""
+
+    async def test_list_all_tools_with_connections(self, mcp_client: AsyncClient):
+        """Returns tools from all connected servers."""
+        from open_agent.models.mcp import MCPToolInfo
+        tool = MCPToolInfo(name="run_query", description="Run SQL query", input_schema={}, server_name="db-server")
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            mock_mm._connections = {"db-server": MagicMock()}
+            mock_mm.get_tools_for_server = AsyncMock(return_value=[tool])
+            resp = await mcp_client.get("/api/mcp/tools")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1

@@ -144,3 +144,85 @@ class TestSaveMessages:
         )
 
         assert resp.status_code == 404
+
+
+class TestUpdateSessionExtended:
+    """Extended session update tests."""
+
+    async def test_update_nonexistent_session_returns_404(self, async_client: AsyncClient):
+        """Returns 404 when updating non-existent session."""
+        resp = await async_client.patch(
+            "/api/sessions/nonexistent-id", json={"title": "New Title"}
+        )
+        assert resp.status_code == 404
+
+    async def test_update_session_preserves_messages(self, async_client: AsyncClient):
+        """Updating title does not affect message count."""
+        create_resp = await async_client.post("/api/sessions/", json={"title": "Original"})
+        session_id = create_resp.json()["id"]
+
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        await async_client.put(
+            f"/api/sessions/{session_id}/messages", json={"messages": messages}
+        )
+
+        resp = await async_client.patch(
+            f"/api/sessions/{session_id}", json={"title": "Updated Title"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "Updated Title"
+        assert resp.json()["message_count"] == 2
+
+
+class TestGetSessionMessages:
+    """GET /api/sessions/{id} — message content verification."""
+
+    async def test_get_session_with_messages(self, async_client: AsyncClient):
+        """Returns session detail with previously saved messages."""
+        create_resp = await async_client.post("/api/sessions/", json={"title": "Msg Test"})
+        session_id = create_resp.json()["id"]
+
+        messages = [
+            {"role": "user", "content": "What is Python?"},
+            {"role": "assistant", "content": "Python is a programming language."},
+        ]
+        await async_client.put(
+            f"/api/sessions/{session_id}/messages", json={"messages": messages}
+        )
+
+        resp = await async_client.get(f"/api/sessions/{session_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["messages"]) == 2
+        assert data["messages"][0]["role"] == "user"
+        assert data["messages"][1]["content"] == "Python is a programming language."
+
+
+class TestMultipleSessions:
+    """Multiple session operations."""
+
+    async def test_create_multiple_sessions(self, async_client: AsyncClient):
+        """Multiple sessions are listed in order."""
+        await async_client.post("/api/sessions/", json={"title": "Session 1"})
+        await async_client.post("/api/sessions/", json={"title": "Session 2"})
+
+        resp = await async_client.get("/api/sessions/")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+
+    async def test_delete_one_session_keeps_others(self, async_client: AsyncClient):
+        """Deleting one session does not affect others."""
+        resp1 = await async_client.post("/api/sessions/", json={"title": "Keep"})
+        resp2 = await async_client.post("/api/sessions/", json={"title": "Delete"})
+
+        await async_client.delete(f"/api/sessions/{resp2.json()['id']}")
+
+        resp = await async_client.get("/api/sessions/")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["title"] == "Keep"

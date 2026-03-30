@@ -190,3 +190,124 @@ class TestReloadSkills:
             resp = await skills_client.post("/api/skills/reload")
         assert resp.status_code == 200
         assert resp.json()["status"] == "reloaded"
+
+    async def test_reload_skills_no_base_dirs(self, skills_client: AsyncClient):
+        """Reload with no base_dirs still returns status."""
+        with patch("open_agent.api.endpoints.skills.skill_manager") as mock_sm:
+            mock_sm._base_dirs = []
+            mock_sm.get_all_skills.return_value = []
+            resp = await skills_client.post("/api/skills/reload")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "reloaded"
+        assert resp.json()["count"] == 0
+
+
+class TestUpdateSkillExtended:
+    """Extended skill update tests."""
+
+    async def test_update_skill_instructions(self, skills_client: AsyncClient):
+        """Updates skill instructions."""
+        updated = _make_skill_info()
+        with patch("open_agent.api.endpoints.skills.skill_manager") as mock_sm:
+            mock_sm.update_skill = AsyncMock(return_value=updated)
+            resp = await skills_client.patch(
+                "/api/skills/test-skill",
+                json={"instructions": "New instructions"},
+            )
+        assert resp.status_code == 200
+
+    async def test_update_skill_enabled_flag(self, skills_client: AsyncClient):
+        """Updates skill enabled flag."""
+        updated = _make_skill_info(enabled=False)
+        with patch("open_agent.api.endpoints.skills.skill_manager") as mock_sm:
+            mock_sm.update_skill = AsyncMock(return_value=updated)
+            resp = await skills_client.patch(
+                "/api/skills/test-skill",
+                json={"enabled": False},
+            )
+        assert resp.status_code == 200
+
+
+class TestExecuteScript:
+    """POST /api/skills/{name}/execute"""
+
+    async def test_execute_script(self, skills_client: AsyncClient):
+        """Executes a skill script."""
+        with patch("open_agent.api.endpoints.skills.skill_manager") as mock_sm:
+            mock_sm.get_skill.return_value = _make_skill_info()
+            mock_sm.execute_script = AsyncMock(return_value={"output": "done", "exit_code": 0})
+            resp = await skills_client.post(
+                "/api/skills/test-skill/execute",
+                params={"script": "setup.sh"},
+            )
+        assert resp.status_code == 200
+
+    async def test_execute_script_not_found(self, skills_client: AsyncClient):
+        """Returns 404 for non-existent skill."""
+        with patch("open_agent.api.endpoints.skills.skill_manager") as mock_sm:
+            mock_sm.get_skill.return_value = None
+            resp = await skills_client.post(
+                "/api/skills/nonexistent/execute",
+                params={"script": "setup.sh"},
+            )
+        assert resp.status_code == 404
+
+
+class TestUploadSkill:
+    """POST /api/skills/upload"""
+
+    async def test_upload_non_zip_returns_400(self, skills_client: AsyncClient):
+        """Returns 400 for non-zip file."""
+        resp = await skills_client.post(
+            "/api/skills/upload",
+            files={"file": ("skill.txt", b"not a zip", "text/plain")},
+        )
+        assert resp.status_code == 400
+
+    async def test_upload_zip_skill(self, skills_client: AsyncClient):
+        """Uploads a zip skill successfully."""
+        skill = _make_skill_info()
+        with patch("open_agent.api.endpoints.skills.skill_manager") as mock_sm:
+            mock_sm.import_from_zip_bytes.return_value = skill
+            resp = await skills_client.post(
+                "/api/skills/upload",
+                files={"file": ("skill.zip", b"PK\x03\x04fakecontent", "application/zip")},
+            )
+        assert resp.status_code == 200
+
+
+class TestImportSkillFromPath:
+    """POST /api/skills/import"""
+
+    async def test_import_skill(self, skills_client: AsyncClient):
+        """Imports skill from local path."""
+        skill = _make_skill_info()
+        with patch("open_agent.api.endpoints.skills.skill_manager") as mock_sm:
+            mock_sm.import_from_path.return_value = skill
+            resp = await skills_client.post(
+                "/api/skills/import",
+                json={"path": "/skills/my-skill"},
+            )
+        assert resp.status_code == 200
+
+    async def test_import_skill_failure(self, skills_client: AsyncClient):
+        """Returns 400 when import fails."""
+        with patch("open_agent.api.endpoints.skills.skill_manager") as mock_sm:
+            mock_sm.import_from_path.side_effect = FileNotFoundError("Path not found")
+            resp = await skills_client.post(
+                "/api/skills/import",
+                json={"path": "/nonexistent"},
+            )
+        assert resp.status_code == 400
+
+
+class TestListWorkflowsEmpty:
+    """Extended workflow tests."""
+
+    async def test_list_workflows_empty(self, skills_client: AsyncClient):
+        """Returns empty list when no workflows exist."""
+        with patch("open_agent.api.endpoints.skills.workflow_router") as mock_wr:
+            mock_wr._skill_summaries = {}
+            resp = await skills_client.get("/api/skills/workflows")
+        assert resp.status_code == 200
+        assert resp.json() == []

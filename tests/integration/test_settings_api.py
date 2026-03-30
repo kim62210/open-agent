@@ -228,3 +228,122 @@ class TestCustomModels:
             "/api/settings/custom-models", params={"model": "openai/gpt-4"}
         )
         assert resp.status_code == 200
+
+
+class TestHealthCheckExtended:
+    """Extended health check tests."""
+
+    async def test_health_llm_failure(self, settings_client: AsyncClient):
+        """Health check reports error when LLM call fails."""
+        from open_agent.core.settings_manager import settings_manager as _stm
+        _stm._settings.llm.api_key = "sk-test"
+        with patch("open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock, side_effect=RuntimeError("Connection refused")):
+            with patch("open_agent.api.endpoints.settings.LLMClient") as mock_llm:
+                mock_llm._resolve_api_key = MagicMock(return_value="sk-test")
+                resp = await settings_client.get("/api/settings/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["server"] == "ok"
+        assert data["llm_connected"] is False
+        assert "Connection refused" in data["error"]
+
+    async def test_health_long_error_message_truncated(self, settings_client: AsyncClient):
+        """Long error messages are truncated to 200 chars."""
+        from open_agent.core.settings_manager import settings_manager as _stm
+        _stm._settings.llm.api_key = "sk-test"
+        long_error = "x" * 500
+        with patch("open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock, side_effect=RuntimeError(long_error)):
+            with patch("open_agent.api.endpoints.settings.LLMClient") as mock_llm:
+                mock_llm._resolve_api_key = MagicMock(return_value="sk-test")
+                resp = await settings_client.get("/api/settings/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["error"].endswith("...")
+        assert len(data["error"]) <= 204  # 200 + "..."
+
+    async def test_health_with_api_base_no_key(self, settings_client: AsyncClient):
+        """Health check proceeds when api_base is set even without api_key."""
+        from open_agent.core.settings_manager import settings_manager as _stm
+        _stm._settings.llm.api_key = None
+        _stm._settings.llm.api_base = "http://localhost:11434"
+        with patch("open_agent.api.endpoints.settings.LLMClient") as mock_llm:
+            mock_llm._resolve_api_key = MagicMock(return_value=None)
+            with patch("open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock) as mock_ac:
+                resp = await settings_client.get("/api/settings/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["llm_connected"] is True
+
+
+class TestValidateModelExtended:
+    """Extended model validation tests."""
+
+    async def test_validate_model_with_api_base(self, settings_client: AsyncClient):
+        """Validate model with custom api_base."""
+        with patch("open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock) as mock_ac:
+            with patch("open_agent.api.endpoints.settings.LLMClient") as mock_llm:
+                mock_llm._resolve_api_key = MagicMock(return_value=None)
+                resp = await settings_client.post(
+                    "/api/settings/validate-model",
+                    json={"model": "local-model", "api_base": "http://localhost:11434"},
+                )
+        assert resp.status_code == 200
+        assert resp.json()["valid"] is True
+
+    async def test_validate_model_long_error_truncated(self, settings_client: AsyncClient):
+        """Long validation error is truncated to 300 chars."""
+        long_error = "e" * 600
+        with patch("open_agent.api.endpoints.settings.acompletion", new_callable=AsyncMock, side_effect=RuntimeError(long_error)):
+            with patch("open_agent.api.endpoints.settings.LLMClient") as mock_llm:
+                mock_llm._resolve_api_key = MagicMock(return_value=None)
+                resp = await settings_client.post(
+                    "/api/settings/validate-model",
+                    json={"model": "bad-model"},
+                )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["valid"] is False
+        assert data["error"].endswith("...")
+
+
+class TestDiscoverModels:
+    """GET /api/settings/models/discover"""
+
+    async def test_discover_single_provider(self, settings_client: AsyncClient):
+        """Discover models for a single provider."""
+        with patch("open_agent.api.endpoints.settings._discover_provider", return_value=[{"id": "openai/gpt-4", "name": "gpt-4"}]) as mock_disc:
+            resp = await settings_client.get(
+                "/api/settings/models/discover", params={"provider": "openai"}
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "providers" in data
+        assert "openai" in data["providers"]
+
+    async def test_discover_all_providers(self, settings_client: AsyncClient):
+        """Discover models from all providers."""
+        with patch("open_agent.api.endpoints.settings._discover_provider", return_value=[]) as mock_disc:
+            resp = await settings_client.get("/api/settings/models/discover")
+        assert resp.status_code == 200
+        assert "providers" in resp.json()
+
+    async def test_discover_empty_provider(self, settings_client: AsyncClient):
+        """Returns empty list for provider with no API key."""
+        with patch("open_agent.api.endpoints.settings._discover_provider", return_value=[]):
+            resp = await settings_client.get(
+                "/api/settings/models/discover", params={"provider": "anthropic"}
+            )
+        assert resp.status_code == 200
+
+
+class TestVersionEndpoint:
+    """GET /api/settings/version"""
+
+    async def test_get_version(self, settings_client: AsyncClient):
+        """Version endpoint returns current version info."""
+        with patch("open_agent.api.endpoints.settings._fetch_version_sync", return_value={"current": "0.8.6", "latest": "0.8.6", "update_available": False}):
+            resp = await settings_client.get("/api/settings/version")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "current" in data
+        assert "update_available" in data
