@@ -2,7 +2,7 @@
 import json, sys, pathlib, html
 
 # -------------------------------------------------------------------
-# 1️⃣ 입력·출력 경로 (절대 경로)
+# 1. Input/output paths (absolute paths)
 # -------------------------------------------------------------------
 if len(sys.argv) != 3:
     print('Usage: json2html.py <json_path> <output_html_path>')
@@ -12,19 +12,19 @@ json_path = pathlib.Path(sys.argv[1])
 output_html = pathlib.Path(sys.argv[2])
 
 # -------------------------------------------------------------------
-# 2️⃣ JSON 로드
+# 2. Load JSON
 # -------------------------------------------------------------------
 with json_path.open(encoding='utf-8') as f:
     data = json.load(f)
 
 # -------------------------------------------------------------------
-# 3️⃣ HTML 조각 생성 함수
+# 3. HTML fragment generation functions
 # -------------------------------------------------------------------
 def esc(txt):
     return html.escape(str(txt))
 
 def _safe_get(obj, *keys, default='-'):
-    """중첩 dict에서 안전하게 값을 추출. 키가 없으면 default 반환."""
+    """Safely extract value from nested dict. Returns default if key is missing."""
     current = obj
     for key in keys:
         if not isinstance(current, dict):
@@ -81,7 +81,7 @@ def render_category(name, items):
     """
 
 # -------------------------------------------------------------------
-# 4️⃣ 전체 HTML 조합
+# 4. Assemble full HTML
 # -------------------------------------------------------------------
 sections = []
 categories = data.get('categories', {})
@@ -94,12 +94,12 @@ elif isinstance(categories, list):
 body_html = '\n'.join(sections)
 
 # -------------------------------------------------------------------
-# 5️⃣ 기존 index.html에 삽입
+# 5. Insert into existing index.html
 # -------------------------------------------------------------------
 with output_html.open('r', encoding='utf-8') as f:
     template = f.read()
 
-PLACEHOLDER = '<div id="content">(생성 중…)</div>'
+PLACEHOLDER = '<div id="content">(generating...)</div>'
 if PLACEHOLDER in template:
     final_html = template.replace(PLACEHOLDER, f'<div id="content">{body_html}</div>')
 else:

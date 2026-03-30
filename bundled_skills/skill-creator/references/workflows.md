@@ -2,27 +2,27 @@
 
 ## Sequential Workflows
 
-복잡한 작업은 명확한 순차 단계로 분해. SKILL.md 초반에 프로세스 개요를 제공하면 효과적:
+Complex tasks are broken into clear sequential steps. Providing a process overview at the beginning of SKILL.md is effective:
 
 ```markdown
-PDF 폼 작성 절차:
+PDF form filling procedure:
 
-1. 폼 분석 (analyze_form.py 실행)
-2. 필드 매핑 생성 (fields.json 편집)
-3. 매핑 검증 (validate_fields.py 실행)
-4. 폼 작성 (fill_form.py 실행)
-5. 출력 검증 (verify_output.py 실행)
+1. Analyze form (run analyze_form.py)
+2. Create field mapping (edit fields.json)
+3. Validate mapping (run validate_fields.py)
+4. Fill form (run fill_form.py)
+5. Verify output (run verify_output.py)
 ```
 
 ## Conditional Workflows
 
-분기 로직이 있는 작업은 의사결정 지점을 안내:
+For tasks with branching logic, guide the decision points:
 
 ```markdown
-1. 수정 유형 결정:
-   **새 콘텐츠 생성?** → 아래 "생성 워크플로우" 진행
-   **기존 콘텐츠 편집?** → 아래 "편집 워크플로우" 진행
+1. Determine modification type:
+   **Creating new content?** -> Proceed to "Creation workflow" below
+   **Editing existing content?** -> Proceed to "Editing workflow" below
 
-2. 생성 워크플로우: [단계들]
-3. 편집 워크플로우: [단계들]
+2. Creation workflow: [steps]
+3. Editing workflow: [steps]
 ```

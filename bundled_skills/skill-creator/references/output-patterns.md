@@ -1,63 +1,63 @@
 # Output Patterns
 
-스킬이 일관되고 고품질의 출력을 생성해야 할 때 사용하는 패턴.
+Patterns to use when a skill needs to produce consistent, high-quality output.
 
 ## Template Pattern
 
-출력 형식에 대한 템플릿 제공. 엄격도를 요구에 맞게 조절.
+Provide a template for the output format. Adjust strictness to match requirements.
 
-**엄격한 형식 (API 응답, 데이터 포맷 등):**
+**Strict format (API responses, data formats, etc.):**
 
 ```markdown
-## 리포트 구조
+## Report Structure
 
-반드시 아래 템플릿 구조를 따를 것:
+Always follow this template structure:
 
-# [분석 제목]
+# [Analysis Title]
 
-## 요약
-[핵심 발견의 1문단 개요]
+## Summary
+[1-paragraph overview of key findings]
 
-## 주요 발견
-- 발견 1 (근거 데이터 포함)
-- 발견 2 (근거 데이터 포함)
+## Key Findings
+- Finding 1 (include supporting data)
+- Finding 2 (include supporting data)
 
-## 권고사항
-1. 구체적이고 실행 가능한 권고
-2. 구체적이고 실행 가능한 권고
+## Recommendations
+1. Specific and actionable recommendation
+2. Specific and actionable recommendation
 ```
 
-**유연한 형식 (맥락에 따라 적응이 유용할 때):**
+**Flexible format (when adaptation by context is useful):**
 
 ```markdown
-## 리포트 구조
+## Report Structure
 
-아래는 합리적인 기본 형식이지만 판단에 따라 조정:
+Below is a reasonable default format, but adjust as needed:
 
-# [분석 제목]
-## 요약
-## 주요 발견
-[발견에 따라 섹션 조정]
-## 권고사항
-[맥락에 맞게 조정]
+# [Analysis Title]
+## Summary
+## Key Findings
+[Adjust sections based on findings]
+## Recommendations
+[Adjust to fit context]
 ```
 
 ## Examples Pattern
 
-출력 품질이 예시에 의존할 때, 입출력 쌍 제공:
+When output quality depends on examples, provide input/output pairs:
 
 ```markdown
-## 커밋 메시지 형식
+## Commit Message Format
 
-아래 예시를 따라 생성:
+Generate following these examples:
 
-**예시 1:**
-입력: JWT 토큰으로 사용자 인증 추가
-출력: feat(auth): JWT 기반 인증 구현
+**Example 1:**
+Input: Add user authentication with JWT tokens
+Output: feat(auth): implement JWT-based authentication
 
-**예시 2:**
-입력: 리포트에서 날짜가 잘못 표시되는 버그 수정
-출력: fix(reports): 타임존 변환 시 날짜 포맷 수정
+**Example 2:**
+Input: Fix bug where dates display incorrectly in reports
+Output: fix(reports): correct date format in timezone conversion
 ```
 
-예시는 설명만으로는 전달하기 어려운 스타일과 디테일 수준을 보여준다.
+Examples demonstrate style and detail levels that are difficult to convey through explanation alone.

@@ -1,231 +1,231 @@
-# 번들 워크플로우 디자인 패턴
+# Bundled Workflow Design Patterns
 
-프로덕션 검증된 7개 번들 워크플로우에서 추출한 스킬 설계 패턴.
-복잡한 멀티스텝 스킬을 만들 때 참고할 것.
+Design patterns extracted from 7 production-validated bundled workflows.
+Reference these when creating complex multi-step skills.
 
-## 패턴 선택 가이드
+## Pattern Selection Guide
 
-스킬의 핵심 동작을 기준으로 패턴을 선택:
+Select a pattern based on the skill's core behavior:
 
 ```
-스킬이 파일을 수정하는가?
-├─ NO → 패턴 A: 읽기 전용 분석
-│        (find, plan, review 참고)
+Does the skill modify files?
+├─ NO -> Pattern A: Read-only Analysis
+│        (reference: find, plan, review)
 └─ YES
-   ├─ 원인 파악이 선행되어야 하는가?
-   │  └─ YES → 패턴 C: 조사 후 수정
-   │           (debug 참고)
-   ├─ 3개 이상 파일을 수정하는가?
-   │  └─ YES → 패턴 D: 복합 파이프라인
-   │           (coding-pipeline 참고)
-   └─ NO → 패턴 B: 표준 구현
-            (impl, test 참고)
+   ├─ Does root cause identification need to come first?
+   │  └─ YES -> Pattern C: Investigate Then Fix
+   │           (reference: debug)
+   ├─ Does it modify 3 or more files?
+   │  └─ YES -> Pattern D: Complex Pipeline
+   │           (reference: coding-pipeline)
+   └─ NO -> Pattern B: Standard Implementation
+            (reference: impl, test)
 ```
 
 ---
 
-## 패턴 A: 읽기 전용 분석
+## Pattern A: Read-only Analysis
 
-**참고 워크플로우**: find, plan, review
-**적용 시점**: 코드 탐색, 설계, 리뷰 등 수정 없는 작업
+**Reference workflows**: find, plan, review
+**When to apply**: Tasks without modifications, such as code exploration, design, review
 
-### allowed-tools 구성
+### allowed-tools Configuration
 ```yaml
 allowed-tools: search, read_file, workspace_glob, list_files
 ```
-`edit_file`, `write_file` 제외로 실수에 의한 수정 원천 차단.
-review는 `bash`를 포함하여 `git diff` 등 상태 확인 허용.
+Excluding `edit_file`, `write_file` prevents accidental modifications.
+review includes `bash` to allow status checks like `git diff`.
 
-### 핵심 규칙 예시
+### Core Rule Example
 ```markdown
-**[핵심] 이 스킬은 읽기 전용이다. 파일을 절대 수정하지 말 것.**
+**[Key] This skill is read-only. Never modify any files.**
 ```
-도구 제한과 함께 텍스트로도 명시하여 이중 보호.
+Dual protection with both tool restriction and text rule.
 
-### 단계 구조
-| 단계 | find | plan | review |
+### Step Structure
+| Step | find | plan | review |
 |------|------|------|--------|
-| 1 | 구조 파악 | 목표 재정의 | 변경 범위 파악 |
-| 2 | 탐색 | 영향 분석 | 버그/엣지케이스 |
-| 3 | 심층 분석 | 리스크 평가 | 통합/보안 검토 |
-| 4 | 종합 보고 | 단계별 계획 | 판정 보고 |
+| 1 | Understand structure | Redefine goals | Identify change scope |
+| 2 | Search | Impact analysis | Bugs/edge cases |
+| 3 | Deep analysis | Risk assessment | Integration/security review |
+| 4 | Synthesized report | Step-by-step plan | Verdict report |
 
-### 설계 원리
-- **출력 형식 고정**: 파일경로:라인번호, 심각도 분류, Pass/Reject 판정 등 구조화된 결과
-- **점진적 탐색**: 정확 검색 → 부분 문자열 → 정규식 순서로 확장
-- **콜 체인 추적**: 호출자 → 대상 → 피호출자 흐름 매핑
+### Design Principles
+- **Fixed output format**: Structured results such as filepath:line_number, severity classification, Pass/Reject verdict
+- **Progressive search**: Exact search -> substring -> regex, expanding in order
+- **Call chain tracing**: Caller -> target -> callee flow mapping
 
 ---
 
-## 패턴 B: 표준 구현
+## Pattern B: Standard Implementation
 
-**참고 워크플로우**: impl, test
-**적용 시점**: 명확한 구현/작성 작업
+**Reference workflows**: impl, test
+**When to apply**: Clear implementation/writing tasks
 
-### allowed-tools 구성
+### allowed-tools Configuration
 ```yaml
 allowed-tools: search, read_file, write_file, edit_file, bash, workspace_glob, list_files
 ```
-읽기 + 쓰기 + 실행 전체 허용.
+Full read + write + execute access allowed.
 
-### 핵심 규칙 예시
+### Core Rule Example
 ```markdown
-**[핵심] 기존 코드 스타일과 패턴을 반드시 따를 것.**
-**3개 이상 파일 수정 시 coding-pipeline을 대신 사용할 것.**
+**[Key] Always follow existing code style and patterns.**
+**For changes to 3+ files, use coding-pipeline instead.**
 ```
-범위 제한 규칙으로 스킬 간 책임 분리.
+Scope limitation rules for responsibility separation between skills.
 
-### 단계 구조 (impl)
-1. **요구사항 확인** — 구체적 스펙으로 분해
-2. **패턴 조사** — 기존 구현 분석 (코딩 전 필수)
-3. **계획 보고** — 사용자 승인 후 진행
-4. **구현** — 의존성 순서로 파일 수정
-5. **테스트** — 빌드 확인, 기존 테스트 실행
-6. **검증 보고** — 최종 리뷰 및 요약
+### Step Structure (impl)
+1. **Confirm requirements** -- Break down into specific specs
+2. **Research patterns** -- Analyze existing implementations (mandatory before coding)
+3. **Report plan** -- Proceed after user approval
+4. **Implement** -- Modify files in dependency order
+5. **Test** -- Verify build, run existing tests
+6. **Verification report** -- Final review and summary
 
-### 설계 원리
-- **조사 선행**: 코드 작성 전에 반드시 기존 패턴 분석
-- **승인 게이트**: 계획을 보고하고 사용자 승인 후 구현
-- **파일별 구문 검증**: 수정 후 즉시 해당 파일의 구문 유효성 확인
+### Design Principles
+- **Research first**: Always analyze existing patterns before writing code
+- **Approval gate**: Report plan and get user approval before implementation
+- **Per-file syntax verification**: Check syntax validity immediately after each modification
 
 ---
 
-## 패턴 C: 조사 후 수정
+## Pattern C: Investigate Then Fix
 
-**참고 워크플로우**: debug
-**적용 시점**: 원인 파악이 선행되어야 하는 작업
+**Reference workflow**: debug
+**When to apply**: Tasks where root cause identification must come first
 
-### allowed-tools 구성
+### allowed-tools Configuration
 ```yaml
 allowed-tools: search, read_file, bash, edit_file, workspace_glob
 ```
-`write_file` 제외 — 새 파일 생성보다 기존 파일 수정에 집중.
+Excluding `write_file` -- focus on modifying existing files rather than creating new ones.
 
-### 핵심 규칙 예시
+### Core Rule Example
 ```markdown
-**[핵심] 4단계(근본 원인 확인) 전에 코드를 절대 수정하지 말 것.**
-**한 번에 하나의 가설만 검증할 것.**
+**[Key] Do not modify any code until Step 4 (root cause confirmed).**
+**Verify only one hypothesis at a time.**
 ```
-조사와 수정의 순서를 강제하는 핵심 규칙.
+Core rule enforcing the order of investigation and fix.
 
-### 단계 구조
-1. **재현** — bash로 증상 재현
-2. **증거 수집** — 로그, 에러, 관련 코드 수집
-3. **데이터 흐름 추적** — 입력→출력 경로의 불일치 발견
-4. **근본 원인 확인** — 한 문장으로 원인 기술 (수정 전 필수)
-5. **최소 수정** — 근본 원인만 수정, 리팩토링 금지
-6. **검증** — 재테스트로 해결 확인
+### Step Structure
+1. **Reproduce** -- Reproduce symptoms with bash
+2. **Gather evidence** -- Collect logs, errors, related code
+3. **Trace data flow** -- Find discrepancies in the input->output path
+4. **Confirm root cause** -- State cause in one sentence (mandatory before fix)
+5. **Minimal fix** -- Fix only the root cause, no refactoring
+6. **Verify** -- Confirm resolution via re-test
 
-### 설계 원리
-- **증거 기반**: 가설 → 검증 → 확인 순환
-- **수정 시점 제한**: 원인 확정 전 코드 변경 금지
-- **최소 침습**: 근본 원인만 수정, 부수적 개선 금지
+### Design Principles
+- **Evidence-based**: Hypothesis -> verification -> confirmation cycle
+- **Restricted modification timing**: No code changes until cause is confirmed
+- **Minimal invasiveness**: Fix only root cause, no incidental improvements
 
 ---
 
-## 패턴 D: 복합 파이프라인
+## Pattern D: Complex Pipeline
 
-**참고 워크플로우**: coding-pipeline
-**적용 시점**: 3개 이상 파일을 수정하는 대규모 변경
+**Reference workflow**: coding-pipeline
+**When to apply**: Large-scale changes modifying 3+ files
 
-### allowed-tools 구성
+### allowed-tools Configuration
 ```yaml
 allowed-tools: search, read_file, write_file, edit_file, bash, workspace_glob, list_files, apply_patch
 ```
-최대 도구 세트 + `apply_patch`로 대규모 변경 지원.
+Maximum tool set + `apply_patch` for large-scale change support.
 
-### 핵심 규칙 예시
+### Core Rule Example
 ```markdown
-**단일 에이전트가 Orchestrator → Developer → Verifier 역할을 순차 수행.**
-**각 서브태스크는 독립 검증 가능해야 한다.**
+**A single agent sequentially performs Orchestrator -> Developer -> Verifier roles.**
+**Each subtask must be independently verifiable.**
 ```
 
-### 단계 구조
-1. **분석** — 프로젝트 구조 스캔, 아키텍처 매핑
-2. **분해** — 서브태스크(T1, T2, T3...)로 분해, 의존성 명시
-3. **순차 실행** — 각 서브태스크마다:
-   - Developer: 코드 작성/수정
-   - Verifier: 구문 검사, 테스트 실행
-   - 실패 시 Developer로 복귀 (최대 3회)
-4. **최종 검증** — 전체 빌드/테스트, 파일 리뷰
+### Step Structure
+1. **Analysis** -- Project structure scan, architecture mapping
+2. **Decomposition** -- Break into subtasks (T1, T2, T3...), specify dependencies
+3. **Sequential execution** -- For each subtask:
+   - Developer: Write/modify code
+   - Verifier: Syntax check, run tests
+   - On failure, return to Developer (max 3 times)
+4. **Final verification** -- Full build/test, file review
 
-### 설계 원리
-- **태스크 분해**: 대규모 변경을 독립 검증 가능한 단위로 분할
-- **검증 게이트**: 서브태스크마다 통과 조건 명시
-- **실패 격리**: 중간 실패가 전체로 전파되지 않음
-- **재시도 제한**: 최대 3회 시도 후 사용자에게 보고
+### Design Principles
+- **Task decomposition**: Split large-scale changes into independently verifiable units
+- **Verification gates**: Specify pass conditions for each subtask
+- **Failure isolation**: Intermediate failures do not propagate to the whole
+- **Retry limits**: Report to user after max 3 attempts
 
 ---
 
-## 구조적 빌딩 블록
+## Structural Building Blocks
 
-### Frontmatter 필수 요소
+### Frontmatter Required Elements
 
-모든 번들 워크플로우가 사용하는 frontmatter 패턴:
+Frontmatter pattern used by all bundled workflows:
 
 ```yaml
 ---
 name: skill-name
 description: >
-  무엇을 하는 스킬인지, 언제 트리거되는지 구체적 기술.
-  "~해줘", "~하고 싶어" 등 사용자 발화 예시 포함.
+  Describe specifically what the skill does and when it is triggered.
+  Include example user phrases like "do X", "I want to Y".
 allowed-tools: tool1, tool2, tool3
 ---
 ```
 
-`allowed-tools`로 스킬의 능력 범위를 선언적으로 제한.
+`allowed-tools` declaratively limits the skill's capability scope.
 
-### 핵심 규칙 작성법
+### Core Rule Writing Guidelines
 
-효과적인 핵심 규칙의 특징:
-- **볼드 + [핵심] 태그**로 시각적 강조
-- **금지 규칙은 구체적**: "수정하지 말 것" (O) vs "주의할 것" (X)
-- **조건부 전환**: "3개 이상 파일 수정 시 → coding-pipeline 사용"
-- **시점 제한**: "N단계 전에 X를 하지 말 것"
+Characteristics of effective core rules:
+- **Bold + [Key] tag** for visual emphasis
+- **Prohibition rules are specific**: "Do not modify" (O) vs "Be careful" (X)
+- **Conditional transitions**: "For 3+ file changes -> use coding-pipeline"
+- **Timing restrictions**: "Do not do X before step N"
 
-### 도구 접근 제어 3전략
+### 3 Tool Access Control Strategies
 
-| 전략 | 방법 | 적용 |
-|------|------|------|
-| **제거** | allowed-tools에서 도구 제외 | 읽기 전용 스킬 (find, plan) |
-| **지연** | "N단계 전에 사용 금지" 텍스트 규칙 | 조사 선행 스킬 (debug) |
-| **전량 허용** | 모든 도구 포함 | 복합 파이프라인 (coding-pipeline) |
+| Strategy | Method | Application |
+|----------|--------|-------------|
+| **Remove** | Exclude tools from allowed-tools | Read-only skills (find, plan) |
+| **Delay** | "Do not use before step N" text rule | Investigation-first skills (debug) |
+| **Full access** | Include all tools | Complex pipelines (coding-pipeline) |
 
-### 검증 설계
+### Verification Design
 
-모든 수정 워크플로우에 검증 단계 포함:
+Include verification steps in all modification workflows:
 
 ```markdown
-## 검증
-1. 수정된 파일의 구문 유효성 확인 (bash 실행)
-2. 기존 테스트 실행 → 회귀 없음 확인
-3. 변경 사항 요약 보고
+## Verification
+1. Verify syntax validity of modified files (bash execution)
+2. Run existing tests -> confirm no regressions
+3. Summarize and report changes
 ```
 
 ---
 
-## 피해야 할 패턴
+## Anti-Patterns to Avoid
 
-### 1. Write-first (조사 없이 바로 수정)
-- **문제**: 기존 패턴을 무시하고 코드 작성 → 스타일 불일치, 중복
-- **대응**: impl의 "패턴 조사" 단계처럼 조사를 필수 선행 단계로
+### 1. Write-first (modifying without investigation)
+- **Problem**: Writing code ignoring existing patterns -> style inconsistency, duplication
+- **Mitigation**: Make investigation a mandatory preceding step, like impl's "Research patterns" step
 
-### 2. Unverified completion (검증 없이 완료 보고)
-- **문제**: 수정 후 빌드/테스트 없이 "완료"
-- **대응**: coding-pipeline의 Verifier 역할처럼 검증 게이트 필수
+### 2. Unverified completion (reporting done without verification)
+- **Problem**: Reporting "complete" without build/test after modification
+- **Mitigation**: Mandatory verification gates, like coding-pipeline's Verifier role
 
-### 3. Missing core rule (핵심 규칙 누락)
-- **문제**: 도구는 제한했지만 텍스트 규칙이 없음 → LLM이 의도를 오해
-- **대응**: allowed-tools 제한 + 텍스트 핵심 규칙 이중 보호
+### 3. Missing core rule (no text rule despite tool restrictions)
+- **Problem**: Tools are restricted but no text rule -> LLM misunderstands intent
+- **Mitigation**: Dual protection with allowed-tools restriction + text core rule
 
-### 4. Scope creep (범위 초과)
-- **문제**: 수정 요청에 리팩토링, 주석 추가, 코드 정리까지 포함
-- **대응**: debug의 "근본 원인만 수정" 규칙처럼 범위를 명시적으로 제한
+### 4. Scope creep (exceeding scope)
+- **Problem**: Fix request includes refactoring, comment additions, code cleanup
+- **Mitigation**: Explicitly limit scope, like debug's "fix only root cause" rule
 
-### 5. Flat steps (단계 구분 없는 나열)
-- **문제**: "1. 분석 2. 구현 3. 테스트"만 나열 → 각 단계의 입력/출력 불명확
-- **대응**: 각 단계에 목표, 대상 파일, 검증 방법을 명시 (plan 패턴)
+### 5. Flat steps (listing without step distinction)
+- **Problem**: Just listing "1. Analyze 2. Implement 3. Test" -> unclear input/output for each step
+- **Mitigation**: Specify goal, target files, and verification method for each step (plan pattern)
 
-### 6. Unbounded retry (무한 재시도)
-- **문제**: 실패 시 무한 반복 → 토큰 낭비, 동일 오류 반복
-- **대응**: coding-pipeline의 "최대 3회 시도 후 사용자에게 보고" 패턴
+### 6. Unbounded retry (infinite retry)
+- **Problem**: Infinite loop on failure -> token waste, repeated same errors
+- **Mitigation**: "Report to user after max 3 attempts" pattern from coding-pipeline
