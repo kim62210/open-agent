@@ -168,11 +168,23 @@ class TestRunJob:
 
     async def test_run_job(self, jobs_client: AsyncClient):
         """Manual job run returns started status."""
-        with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
-            mock_sched.run_now = AsyncMock()
-            resp = await jobs_client.post("/api/jobs/job-1/run")
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+                mock_jm.get_job.return_value = _make_job_info()
+                mock_sched.run_now = AsyncMock()
+                resp = await jobs_client.post("/api/jobs/job-1/run")
         assert resp.status_code == 200
         assert resp.json()["status"] == "started"
+
+    async def test_run_job_denies_missing_owner(self, jobs_client: AsyncClient):
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+                mock_jm.get_job.return_value = None
+                mock_sched.run_now = AsyncMock()
+                resp = await jobs_client.post("/api/jobs/job-1/run")
+
+        assert resp.status_code == 404
+        mock_sched.run_now.assert_not_called()
 
 
 class TestGetJobHistory:
@@ -256,11 +268,23 @@ class TestStopJob:
 
     async def test_stop_job(self, jobs_client: AsyncClient):
         """Stops a running job."""
-        with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
-            mock_sched.stop_job = AsyncMock()
-            resp = await jobs_client.post("/api/jobs/job-1/stop")
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+                mock_jm.get_job.return_value = _make_job_info()
+                mock_sched.stop_job = AsyncMock()
+                resp = await jobs_client.post("/api/jobs/job-1/stop")
         assert resp.status_code == 200
         assert resp.json()["status"] == "stopping"
+
+    async def test_stop_job_denies_missing_owner(self, jobs_client: AsyncClient):
+        with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+                mock_jm.get_job.return_value = None
+                mock_sched.stop_job = AsyncMock()
+                resp = await jobs_client.post("/api/jobs/job-1/stop")
+
+        assert resp.status_code == 404
+        mock_sched.stop_job.assert_not_called()
 
 
 class TestDeleteJobExtended:

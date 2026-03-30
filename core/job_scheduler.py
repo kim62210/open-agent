@@ -281,17 +281,20 @@ class JobScheduler:
             self._running_tasks.pop(job_id, None)
             self.refresh_job(job_id)
 
-    async def run_now(self, job_id: str) -> None:
+    async def run_now(self, job_id: str, owner_user_id: str | None = None) -> None:
         """수동 즉시 실행."""
-        job = job_manager.get_job(job_id)
+        job = job_manager.get_job(job_id, owner_user_id=owner_user_id)
         if not job:
             raise JobNotFoundError(f"Job not found: {job_id}")
         if job_id in self._running_tasks:
             raise JobStateError(f"Job is already running: {job_id}")
         self._spawn_job(job_id)
 
-    async def stop_job(self, job_id: str) -> None:
+    async def stop_job(self, job_id: str, owner_user_id: str | None = None) -> None:
         """실행 중인 Job을 취소합니다."""
+        job = job_manager.get_job(job_id, owner_user_id=owner_user_id)
+        if not job:
+            raise JobNotFoundError(f"Job not found: {job_id}")
         task = self._running_tasks.get(job_id)
         if not task:
             raise JobStateError(f"Job is not running: {job_id}")

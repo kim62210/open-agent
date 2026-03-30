@@ -1,13 +1,18 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from core.db.models.run import RunEventORM, RunORM
 from core.db.repositories.run_repo import RunRepository
-from models.run import RunDetail, RunEvent
+from core.task_supervisor import task_supervisor
+from models.run import RunDetail, RunEvent, RunStatus
 
 
 class RunManager:
+    def __init__(self) -> None:
+        self._background_tasks: dict[str, asyncio.Task[Any]] = {}
+
     async def create_run(
         self,
         owner_user_id: str,
@@ -120,6 +125,47 @@ class RunManager:
                 if hydrated:
                     details.append(self._to_detail(hydrated))
             return details
+
+    async def get_run_status(self, run_id: str, owner_user_id: str) -> RunStatus | None:
+        run = await self.get_run(run_id, owner_user_id=owner_user_id)
+        if not run:
+            return None
+        return RunStatus(
+            id=run.id,
+            status=run.status,
+            finished_at=run.finished_at,
+            error_message=run.error_message,
+        )
+
+    def register_background_task(self, run_id: str, task: asyncio.Task[Any]) -> None:
+        self._background_tasks[run_id] = task
+        task_supervisor.track(task, name="run.background", metadata={"run_id": run_id})
+        task.add_done_callback(lambda _task, rid=run_id: self._background_tasks.pop(rid, None))
+
+    async def abort_run(self, run_id: str, owner_user_id: str) -> RunStatus | None:
+        run = await self.get_run(run_id, owner_user_id=owner_user_id)
+        if not run:
+            return None
+
+        task = self._background_tasks.get(run_id)
+        if task and not task.done():
+            task.cancel()
+
+        await self.append_event(run_id, "run.cancelled", {"reason": "user_abort"})
+        updated = await self.finish_run(
+            run_id,
+            status="cancelled",
+            error_message="Cancelled by user",
+        )
+        if not updated:
+            return None
+
+        return RunStatus(
+            id=updated.id,
+            status=updated.status,
+            finished_at=updated.finished_at,
+            error_message=updated.error_message,
+        )
 
     @staticmethod
     def _to_detail(run: RunORM) -> RunDetail:

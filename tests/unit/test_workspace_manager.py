@@ -1,10 +1,8 @@
 """WorkspaceManager unit tests — async DB-backed + filesystem operations."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
-
 from open_agent.core.exceptions import (
     AlreadyExistsError,
     InvalidPathError,
@@ -62,9 +60,7 @@ class TestWorkspaceCreate:
         self, workspace_manager: WorkspaceManager, tmp_workspace: Path
     ):
         """Created workspace persists in DB and survives reload."""
-        ws = await workspace_manager.create_workspace(
-            name="Persist WS", path=str(tmp_workspace)
-        )
+        ws = await workspace_manager.create_workspace(name="Persist WS", path=str(tmp_workspace))
 
         workspace_manager._workspaces.clear()
         await workspace_manager.load_from_db()
@@ -105,9 +101,7 @@ class TestWorkspaceGet:
 class TestWorkspaceUpdate:
     """Workspace update tests."""
 
-    async def test_update_name(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_update_name(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """Workspace name can be updated."""
         ws = await workspace_manager.create_workspace("Old Name", str(tmp_workspace))
         result = await workspace_manager.update_workspace(ws.id, name="New Name")
@@ -128,9 +122,7 @@ class TestWorkspaceUpdate:
     ):
         """Name and description can be updated together."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
-        result = await workspace_manager.update_workspace(
-            ws.id, name="New", description="New desc"
-        )
+        result = await workspace_manager.update_workspace(ws.id, name="New", description="New desc")
         assert result.name == "New"
         assert result.description == "New desc"
 
@@ -155,9 +147,7 @@ class TestWorkspaceUpdate:
 class TestWorkspaceDelete:
     """Workspace deletion tests."""
 
-    async def test_delete_workspace(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_delete_workspace(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """Workspace can be deleted."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         result = await workspace_manager.delete_workspace(ws.id)
@@ -184,9 +174,7 @@ class TestWorkspaceDelete:
 class TestWorkspaceActivation:
     """Workspace activation/deactivation tests."""
 
-    async def test_set_active(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_set_active(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """A workspace can be activated."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         result = await workspace_manager.set_active(ws.id)
@@ -211,9 +199,7 @@ class TestWorkspaceActivation:
         result = await workspace_manager.set_active("nonexistent")
         assert result is None
 
-    async def test_get_active(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_get_active(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """get_active returns the active workspace."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         assert workspace_manager.get_active() is None
@@ -223,9 +209,7 @@ class TestWorkspaceActivation:
         assert active is not None
         assert active.id == ws.id
 
-    async def test_deactivate_all(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_deactivate_all(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """deactivate sets all workspaces to inactive."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         await workspace_manager.set_active(ws.id)
@@ -234,13 +218,37 @@ class TestWorkspaceActivation:
         await workspace_manager.deactivate()
         assert workspace_manager.get_active() is None
 
+    async def test_set_active_is_user_scoped(
+        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
+    ):
+        ws1 = await workspace_manager.create_workspace(
+            "WS1", str(tmp_workspace), owner_user_id="user-1"
+        )
+        ws2 = await workspace_manager.create_workspace(
+            "WS2", str(tmp_workspace), owner_user_id="user-2"
+        )
+
+        await workspace_manager.set_active(ws1.id, owner_user_id="user-1")
+        await workspace_manager.set_active(ws2.id, owner_user_id="user-2")
+
+        assert workspace_manager.get_active(owner_user_id="user-1").id == ws1.id
+        assert workspace_manager.get_active(owner_user_id="user-2").id == ws2.id
+
+    async def test_file_read_denies_other_owner(
+        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
+    ):
+        ws = await workspace_manager.create_workspace(
+            "WS", str(tmp_workspace), owner_user_id="user-1"
+        )
+
+        with pytest.raises(PermissionDeniedError):
+            workspace_manager.read_file(ws.id, "hello.txt", owner_user_id="user-2")
+
 
 class TestWorkspaceFileOperations:
     """File operations within workspace context."""
 
-    async def test_read_file(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_read_file(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """Read a file from a workspace."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         content = workspace_manager.read_file(ws.id, "hello.txt")
@@ -266,9 +274,7 @@ class TestWorkspaceFileOperations:
         assert lines[0] == "line2"
         assert len(lines) == 2
 
-    async def test_write_file(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_write_file(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """Write a new file to a workspace."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         result = workspace_manager.write_file(ws.id, "new_file.txt", "new content")
@@ -291,9 +297,7 @@ class TestWorkspaceFileOperations:
         with pytest.raises(PermissionDeniedError):
             workspace_manager.write_file(ws.id, "hello.txt", "   ")
 
-    async def test_get_file_tree(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_get_file_tree(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """File tree lists files and directories."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         tree = workspace_manager.get_file_tree(ws.id)
@@ -309,9 +313,7 @@ class TestWorkspaceFileOperations:
         with pytest.raises(NotFoundError, match="Not a directory"):
             workspace_manager.get_file_tree(ws.id, "nonexistent_dir")
 
-    async def test_rename_file(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_rename_file(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """File can be renamed."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         result = workspace_manager.rename_file(ws.id, "hello.txt", "renamed.txt")
@@ -336,9 +338,7 @@ class TestWorkspaceFileOperations:
         with pytest.raises(NotFoundError, match="Source not found"):
             workspace_manager.rename_file(ws.id, "ghost.txt", "new.txt")
 
-    async def test_mkdir(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_mkdir(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """Directory can be created."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         result = workspace_manager.mkdir(ws.id, "new_dir")
@@ -353,18 +353,14 @@ class TestWorkspaceFileOperations:
         with pytest.raises(AlreadyExistsError):
             workspace_manager.mkdir(ws.id, "subdir")
 
-    async def test_delete_file(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_delete_file(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """File can be deleted."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         result = workspace_manager.delete_path(ws.id, "hello.txt")
         assert "Deleted" in result
         assert not (tmp_workspace / "hello.txt").exists()
 
-    async def test_delete_directory(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_delete_directory(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """Directory can be deleted recursively."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
         result = workspace_manager.delete_path(ws.id, "subdir")
@@ -387,12 +383,10 @@ class TestWorkspaceFileOperations:
         with pytest.raises(PermissionDeniedError, match="Cannot delete workspace root"):
             workspace_manager.delete_path(ws.id, ".")
 
-    async def test_upload_file(
-        self, workspace_manager: WorkspaceManager, tmp_workspace: Path
-    ):
+    async def test_upload_file(self, workspace_manager: WorkspaceManager, tmp_workspace: Path):
         """Binary content can be uploaded."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
-        rel = workspace_manager.upload_file(ws.id, ".", "upload.bin", b"\x00\x01\x02")
+        workspace_manager.upload_file(ws.id, ".", "upload.bin", b"\x00\x01\x02")
         assert (tmp_workspace / "upload.bin").exists()
         assert (tmp_workspace / "upload.bin").read_bytes() == b"\x00\x01\x02"
 
@@ -401,7 +395,7 @@ class TestWorkspaceFileOperations:
     ):
         """Upload creates subdirectory if needed."""
         ws = await workspace_manager.create_workspace("WS", str(tmp_workspace))
-        rel = workspace_manager.upload_file(ws.id, "uploads", "data.txt", b"data")
+        workspace_manager.upload_file(ws.id, "uploads", "data.txt", b"data")
         assert (tmp_workspace / "uploads" / "data.txt").exists()
 
     async def test_get_raw_file_path(

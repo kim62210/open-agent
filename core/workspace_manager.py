@@ -182,13 +182,14 @@ class WorkspaceManager:
             from core.db.engine import async_session_factory
             from core.db.repositories.workspace_repo import WorkspaceRepository
 
-            for w in self._workspaces.values():
-                w.is_active = False
+            for wid, workspace in self._workspaces.items():
+                if owner_user_id is None or self._owners.get(wid) == owner_user_id:
+                    workspace.is_active = False
             ws.is_active = True
 
             async with async_session_factory() as session:
                 repo = WorkspaceRepository(session)
-                await repo.set_active(workspace_id)
+                await repo.set_active(workspace_id, owner_user_id=owner_user_id)
                 await session.commit()
 
             logger.info(f"Activated workspace: {ws.name}")
@@ -224,10 +225,14 @@ class WorkspaceManager:
 
     # --- File Operations (unchanged — filesystem only) ---
 
-    def _resolve_safe_path(self, workspace_id: str, relative_path: str) -> Path:
-        ws = self._workspaces.get(workspace_id)
-        if not ws:
+    def _resolve_safe_path(
+        self, workspace_id: str, relative_path: str, owner_user_id: str | None = None
+    ) -> Path:
+        if workspace_id not in self._workspaces:
             raise NotFoundError(f"Workspace not found: {workspace_id}")
+        ws = self.get_workspace(workspace_id, owner_user_id=owner_user_id)
+        if not ws:
+            raise PermissionDeniedError("Workspace not accessible")
         root = Path(ws.path).resolve()
         abs_candidate = Path(relative_path).resolve()
         if abs_candidate != Path(relative_path) and abs_candidate.is_relative_to(root):
@@ -238,9 +243,13 @@ class WorkspaceManager:
         return target
 
     def get_file_tree(
-        self, workspace_id: str, path: str = ".", max_depth: int = 3
+        self,
+        workspace_id: str,
+        path: str = ".",
+        max_depth: int = 3,
+        owner_user_id: str | None = None,
     ) -> list[FileTreeNode]:
-        target = self._resolve_safe_path(workspace_id, path)
+        target = self._resolve_safe_path(workspace_id, path, owner_user_id=owner_user_id)
         if not target.is_dir():
             raise NotFoundError(f"Not a directory: {path}")
         ws = self._workspaces.get(workspace_id)
@@ -291,9 +300,14 @@ class WorkspaceManager:
         return nodes
 
     def read_file(
-        self, workspace_id: str, path: str, offset: int = 0, limit: int | None = None
+        self,
+        workspace_id: str,
+        path: str,
+        offset: int = 0,
+        limit: int | None = None,
+        owner_user_id: str | None = None,
     ) -> FileContent:
-        target = self._resolve_safe_path(workspace_id, path)
+        target = self._resolve_safe_path(workspace_id, path, owner_user_id=owner_user_id)
         if not target.is_file():
             raise NotFoundError(f"File not found: {path}")
 
@@ -315,15 +329,19 @@ class WorkspaceManager:
             limit=limit,
         )
 
-    def get_raw_file_path(self, workspace_id: str, path: str) -> Path:
-        target = self._resolve_safe_path(workspace_id, path)
+    def get_raw_file_path(
+        self, workspace_id: str, path: str, owner_user_id: str | None = None
+    ) -> Path:
+        target = self._resolve_safe_path(workspace_id, path, owner_user_id=owner_user_id)
         if not target.is_file():
             raise NotFoundError(f"File not found: {path}")
         return target
 
-    def rename_file(self, workspace_id: str, old_path: str, new_path: str) -> str:
-        source = self._resolve_safe_path(workspace_id, old_path)
-        target = self._resolve_safe_path(workspace_id, new_path)
+    def rename_file(
+        self, workspace_id: str, old_path: str, new_path: str, owner_user_id: str | None = None
+    ) -> str:
+        source = self._resolve_safe_path(workspace_id, old_path, owner_user_id=owner_user_id)
+        target = self._resolve_safe_path(workspace_id, new_path, owner_user_id=owner_user_id)
         if not source.exists():
             raise NotFoundError(f"Source not found: {old_path}")
         if target.exists():
@@ -332,17 +350,17 @@ class WorkspaceManager:
         source.rename(target)
         return f"Renamed: {old_path} → {new_path}"
 
-    def mkdir(self, workspace_id: str, path: str) -> str:
-        target = self._resolve_safe_path(workspace_id, path)
+    def mkdir(self, workspace_id: str, path: str, owner_user_id: str | None = None) -> str:
+        target = self._resolve_safe_path(workspace_id, path, owner_user_id=owner_user_id)
         if target.exists():
             raise AlreadyExistsError(f"Already exists: {path}")
         target.mkdir(parents=True, exist_ok=True)
         return f"Created directory: {path}"
 
-    def delete_path(self, workspace_id: str, path: str) -> str:
+    def delete_path(self, workspace_id: str, path: str, owner_user_id: str | None = None) -> str:
         import shutil
 
-        target = self._resolve_safe_path(workspace_id, path)
+        target = self._resolve_safe_path(workspace_id, path, owner_user_id=owner_user_id)
         if not target.exists():
             raise NotFoundError(f"Not found: {path}")
         ws = self._workspaces.get(workspace_id)
@@ -356,16 +374,23 @@ class WorkspaceManager:
         return f"Deleted: {path}"
 
     def upload_file(
-        self, workspace_id: str, directory: str, filename: str, content_bytes: bytes
+        self,
+        workspace_id: str,
+        directory: str,
+        filename: str,
+        content_bytes: bytes,
+        owner_user_id: str | None = None,
     ) -> str:
         rel_path = f"{directory}/{filename}" if directory and directory != "." else filename
-        target = self._resolve_safe_path(workspace_id, rel_path)
+        target = self._resolve_safe_path(workspace_id, rel_path, owner_user_id=owner_user_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content_bytes)
         return rel_path
 
-    def write_file(self, workspace_id: str, path: str, content: str) -> str:
-        target = self._resolve_safe_path(workspace_id, path)
+    def write_file(
+        self, workspace_id: str, path: str, content: str, owner_user_id: str | None = None
+    ) -> str:
+        target = self._resolve_safe_path(workspace_id, path, owner_user_id=owner_user_id)
         if not content.strip() and target.is_file():
             raise PermissionDeniedError(
                 "빈 내용으로 기존 파일을 덮어쓸 수 없습니다. "
@@ -375,10 +400,12 @@ class WorkspaceManager:
         target.write_text(content, encoding="utf-8")
         return f"File written: {path} ({len(content)} chars)\nAbsolute path: {target}"
 
-    def edit_file(self, workspace_id: str, req: EditFileRequest) -> str:
+    def edit_file(
+        self, workspace_id: str, req: EditFileRequest, owner_user_id: str | None = None
+    ) -> str:
         from open_agent.core.fuzzy import find_closest_match, fuzzy_find, fuzzy_replace
 
-        target = self._resolve_safe_path(workspace_id, req.path)
+        target = self._resolve_safe_path(workspace_id, req.path, owner_user_id=owner_user_id)
         if not target.is_file():
             raise NotFoundError(f"File not found: {req.path}")
 

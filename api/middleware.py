@@ -1,4 +1,5 @@
 """FastAPI 미들웨어."""
+
 import time
 import uuid
 
@@ -6,6 +7,8 @@ import structlog
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
+
+from core.request_context import clear_current_user_id
 
 logger = structlog.get_logger(__name__)
 
@@ -15,6 +18,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = uuid.uuid4().hex[:8]
+        request.state.request_id = request_id
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id)
 
@@ -51,4 +55,5 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             )
             raise
         finally:
+            clear_current_user_id()
             structlog.contextvars.clear_contextvars()

@@ -12,6 +12,7 @@ from pydantic import BaseModel, field_validator
 from core.auth.dependencies import require_user
 from core.auth.rate_limit import limiter
 from core.run_manager import run_manager
+from models.run import AsyncRunAccepted
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,53 @@ async def chat(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.post("/async", status_code=202, response_model=AsyncRunAccepted)
+@limiter.limit("20/minute")
+async def chat_async(
+    request: Request,
+    body: ChatRequest,
+    current_user: Annotated[dict, Depends(require_user)],
+):
+    run = await run_manager.create_run(
+        owner_user_id=current_user["id"],
+        request_messages=body.messages,
+    )
+    await run_manager.append_event(
+        run.id,
+        "async.request.received",
+        {"message_count": len(body.messages), "forced_workflow": body.forced_workflow},
+    )
+
+    async def _background_run() -> None:
+        try:
+            response = await orchestrator.run(body.messages, forced_workflow=body.forced_workflow)
+            await run_manager.append_event(
+                run.id,
+                "async.response.completed",
+                {"has_choices": bool(response.get("choices"))},
+            )
+            await run_manager.finish_run(run.id, status="completed", response_payload=response)
+            try:
+                assistant_content = _safe_get_content(response)
+                await _enqueue_turn(body.messages, assistant_content)
+            except Exception as e:
+                logger.debug(f"Memory extraction trigger failed: {e}")
+        except asyncio.CancelledError:
+            await run_manager.finish_run(
+                run.id,
+                status="cancelled",
+                error_message="Cancelled by user",
+            )
+            raise
+        except Exception as e:
+            await run_manager.append_event(run.id, "async.response.failed", {"error": str(e)})
+            await run_manager.finish_run(run.id, status="failed", error_message=str(e))
+
+    task = asyncio.create_task(_background_run())
+    run_manager.register_background_task(run.id, task)
+    return AsyncRunAccepted(run_id=run.id, status=run.status)
+
+
 @router.post("/stream")
 @limiter.limit("10/minute")
 async def chat_stream(
@@ -171,6 +219,7 @@ async def chat_stream(
     )
 
     async def event_generator():
+        finished = False
         try:
             async for event in orchestrator.run_stream(
                 body.messages, skip_routing=body.skip_routing, forced_workflow=body.forced_workflow
@@ -193,7 +242,10 @@ async def chat_stream(
                         status="completed",
                         response_payload=event.get("full_response"),
                     )
+                    finished = True
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if not finished:
+                await run_manager.finish_run(run.id, status="completed", response_payload=None)
         except Exception as e:
             logger.error("Stream error: %s", e)
             await run_manager.append_event(run.id, "stream.failed", {"error": str(e)})

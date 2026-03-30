@@ -72,14 +72,20 @@ async def toggle_job(job_id: str, current_user: Annotated[dict, Depends(require_
 @router.post("/{job_id}/run")
 async def run_job(job_id: str, current_user: Annotated[dict, Depends(require_user)]):
     """수동 즉시 실행"""
-    await job_scheduler.run_now(job_id)
+    job = job_manager.get_job(job_id, owner_user_id=current_user["id"])
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    await job_scheduler.run_now(job_id, owner_user_id=current_user["id"])
     return {"status": "started", "job_id": job_id}
 
 
 @router.post("/{job_id}/stop")
 async def stop_job(job_id: str, current_user: Annotated[dict, Depends(require_user)]):
     """실행 중인 Job 중지"""
-    await job_scheduler.stop_job(job_id)
+    job = job_manager.get_job(job_id, owner_user_id=current_user["id"])
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    await job_scheduler.stop_job(job_id, owner_user_id=current_user["id"])
     return {"status": "stopping", "job_id": job_id}
 
 

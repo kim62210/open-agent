@@ -226,7 +226,12 @@ async def get_file_tree(
     path: str = ".",
     max_depth: int = 3,
 ):
-    return workspace_manager.get_file_tree(workspace_id, path, max_depth)
+    return workspace_manager.get_file_tree(
+        workspace_id,
+        path,
+        max_depth,
+        owner_user_id=current_user["id"],
+    )
 
 
 @router.get("/{workspace_id}/file", response_model=FileContent)
@@ -237,7 +242,13 @@ async def read_file(
     offset: int = 0,
     limit: int | None = None,
 ):
-    return workspace_manager.read_file(workspace_id, path, offset, limit)
+    return workspace_manager.read_file(
+        workspace_id,
+        path,
+        offset,
+        limit,
+        owner_user_id=current_user["id"],
+    )
 
 
 # 개발 파일 확장자 MIME 오버라이드 (.ts → video/mp2t 방지 등)
@@ -263,7 +274,9 @@ async def get_raw_file(
     current_user: Annotated[dict, Depends(require_any)],
     download: bool = False,
 ):
-    file_path = workspace_manager.get_raw_file_path(workspace_id, path)
+    file_path = workspace_manager.get_raw_file_path(
+        workspace_id, path, owner_user_id=current_user["id"]
+    )
 
     ext = file_path.suffix.lower()
     media_type = _MIME_OVERRIDES.get(ext)
@@ -290,7 +303,11 @@ async def upload_files(
     for file in files:
         content = await file.read()
         rel_path = workspace_manager.upload_file(
-            workspace_id, path, file.filename or "unnamed", content
+            workspace_id,
+            path,
+            file.filename or "unnamed",
+            content,
+            owner_user_id=current_user["id"],
         )
         results.append({"filename": file.filename, "path": rel_path})
     return {"status": "ok", "uploaded": results}
@@ -313,7 +330,9 @@ class DeleteFileRequest(BaseModel):
 async def rename_file(
     workspace_id: str, req: RenameRequest, current_user: Annotated[dict, Depends(require_user)]
 ):
-    result = workspace_manager.rename_file(workspace_id, req.old_path, req.new_path)
+    result = workspace_manager.rename_file(
+        workspace_id, req.old_path, req.new_path, owner_user_id=current_user["id"]
+    )
     return {"status": "ok", "message": result}
 
 
@@ -321,7 +340,7 @@ async def rename_file(
 async def mkdir(
     workspace_id: str, req: MkdirRequest, current_user: Annotated[dict, Depends(require_user)]
 ):
-    result = workspace_manager.mkdir(workspace_id, req.path)
+    result = workspace_manager.mkdir(workspace_id, req.path, owner_user_id=current_user["id"])
     return {"status": "ok", "message": result}
 
 
@@ -329,7 +348,7 @@ async def mkdir(
 async def delete_file(
     workspace_id: str, req: DeleteFileRequest, current_user: Annotated[dict, Depends(require_user)]
 ):
-    result = workspace_manager.delete_path(workspace_id, req.path)
+    result = workspace_manager.delete_path(workspace_id, req.path, owner_user_id=current_user["id"])
     return {"status": "ok", "message": result}
 
 
@@ -337,7 +356,12 @@ async def delete_file(
 async def write_file(
     workspace_id: str, req: WriteFileRequest, current_user: Annotated[dict, Depends(require_user)]
 ):
-    result = workspace_manager.write_file(workspace_id, req.path, req.content)
+    result = workspace_manager.write_file(
+        workspace_id,
+        req.path,
+        req.content,
+        owner_user_id=current_user["id"],
+    )
     return {"status": "ok", "message": result}
 
 
@@ -346,7 +370,7 @@ async def edit_file(
     workspace_id: str, req: EditFileRequest, current_user: Annotated[dict, Depends(require_user)]
 ):
     try:
-        result = workspace_manager.edit_file(workspace_id, req)
+        result = workspace_manager.edit_file(workspace_id, req, owner_user_id=current_user["id"])
         return {"status": "ok", "message": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

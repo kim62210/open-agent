@@ -6,10 +6,14 @@ Override: Set DATABASE_URL environment variable for PostgreSQL, etc.
 
 import os
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 
 def _build_database_url() -> str:
@@ -64,15 +68,20 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 async def init_db() -> None:
     """Initialize database: create tables, enable WAL for SQLite."""
+    from core.db.base import Base
     from core.db.models import register_all_models  # noqa: F401 — ensure models are loaded
 
-    from core.db.base import Base
+    bootstrap_schema = (
+        os.getenv("OPEN_AGENT_DEV", "") == "1"
+        or os.getenv("OPEN_AGENT_BOOTSTRAP_SCHEMA", "") == "1"
+    )
 
     async with engine.begin() as conn:
         if str(engine.url).startswith("sqlite"):
             await conn.execute(text("PRAGMA journal_mode=WAL"))
             await conn.execute(text("PRAGMA busy_timeout=5000"))
-        await conn.run_sync(Base.metadata.create_all)
+        if bootstrap_schema:
+            await conn.run_sync(Base.metadata.create_all)
 
 
 async def close_db() -> None:

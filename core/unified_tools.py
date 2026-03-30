@@ -8,17 +8,29 @@ Context is auto-detected from active workspace/page state, or explicit via `cont
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from open_agent.core.exceptions import InvalidPathError
 from open_agent.core.page_manager import page_manager
 from open_agent.core.workspace_manager import workspace_manager
 
+from core.request_context import get_current_user_id
+
 logger = logging.getLogger(__name__)
 
+
+def _current_owner_user_id() -> str | None:
+    return get_current_user_id()
+
+
 UNIFIED_TOOL_NAMES = {
-    "read_file", "write_file", "edit_file", "search",
-    "list_files", "apply_patch", "bash",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "search",
+    "list_files",
+    "apply_patch",
+    "bash",
 }
 
 # Backward compatibility: old tool names → unified name + context hint
@@ -46,12 +58,24 @@ _LEGACY_NAME_MAP = {
 
 # Web-focused extensions allowed for page file creation
 _PAGE_ALLOWED_EXTENSIONS = {
-    ".html", ".htm", ".css", ".js", ".jsx", ".tsx", ".ts", ".mjs",
-    ".json", ".xml", ".svg", ".md", ".txt", ".csv",
+    ".html",
+    ".htm",
+    ".css",
+    ".js",
+    ".jsx",
+    ".tsx",
+    ".ts",
+    ".mjs",
+    ".json",
+    ".xml",
+    ".svg",
+    ".md",
+    ".txt",
+    ".csv",
 }
 
 
-def resolve_legacy_tool(function_name: str, args: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+def resolve_legacy_tool(function_name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Map legacy tool names to unified names with context hint injection."""
     if function_name in _LEGACY_NAME_MAP:
         unified_name, context_hint = _LEGACY_NAME_MAP[function_name]
@@ -76,13 +100,14 @@ def resolve_legacy_tool(function_name: str, args: Dict[str, Any]) -> tuple[str, 
     return function_name, args
 
 
-def _resolve_context(args: Dict[str, Any]) -> str:
+def _resolve_context(args: dict[str, Any]) -> str:
     """Determine the target context: 'workspace', 'page', or error."""
     explicit = args.get("context")
     if explicit in ("workspace", "page", "skill"):
         return explicit
 
-    has_workspace = workspace_manager.get_active() is not None
+    owner_user_id = _current_owner_user_id()
+    has_workspace = workspace_manager.get_active(owner_user_id=owner_user_id) is not None
     has_page = page_manager.get_active_page() is not None
 
     if has_workspace and not has_page:
@@ -95,7 +120,7 @@ def _resolve_context(args: Dict[str, Any]) -> str:
         if path:
             # Try workspace first (safe path check)
             try:
-                active_ws = workspace_manager.get_active()
+                active_ws = workspace_manager.get_active(owner_user_id=owner_user_id)
                 if active_ws:
                     ws_root = Path(active_ws.path).resolve()
                     ws_path = (ws_root / path).resolve()
@@ -117,9 +142,11 @@ def _resolve_context(args: Dict[str, Any]) -> str:
 
 # --- Unified tool definitions ---
 
-def get_unified_tools() -> List[Dict[str, Any]]:
+
+def get_unified_tools() -> list[dict[str, Any]]:
     """Return unified tools based on active contexts."""
-    has_workspace = workspace_manager.get_active() is not None
+    owner_user_id = _current_owner_user_id()
+    has_workspace = workspace_manager.get_active(owner_user_id=owner_user_id) is not None
     has_page = page_manager.get_active_page() is not None
 
     if not has_workspace and not has_page:
@@ -139,8 +166,15 @@ def get_unified_tools() -> List[Dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "파일 경로 (상대 경로)"},
-                        "offset": {"type": "integer", "description": "읽기 시작 라인 번호 (0-based, 기본: 0)", "default": 0},
-                        "limit": {"type": "integer", "description": "읽을 라인 수 (생략 시 전체 파일)"},
+                        "offset": {
+                            "type": "integer",
+                            "description": "읽기 시작 라인 번호 (0-based, 기본: 0)",
+                            "default": 0,
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "읽을 라인 수 (생략 시 전체 파일)",
+                        },
                     },
                     "required": ["path"],
                 },
@@ -181,9 +215,16 @@ def get_unified_tools() -> List[Dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "수정할 파일 경로"},
-                        "old_string": {"type": "string", "description": "교체할 기존 문자열 (파일 내 유일해야 함)"},
+                        "old_string": {
+                            "type": "string",
+                            "description": "교체할 기존 문자열 (파일 내 유일해야 함)",
+                        },
                         "new_string": {"type": "string", "description": "새로 삽입할 문자열"},
-                        "replace_all": {"type": "boolean", "description": "true면 모든 일치를 교체 (기본: false)", "default": False},
+                        "replace_all": {
+                            "type": "boolean",
+                            "description": "true면 모든 일치를 교체 (기본: false)",
+                            "default": False,
+                        },
                     },
                     "required": ["path", "old_string", "new_string"],
                 },
@@ -203,11 +244,30 @@ def get_unified_tools() -> List[Dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string", "description": "검색할 정규식 패턴"},
-                        "path": {"type": "string", "description": "검색 시작 경로 (기본: 루트)", "default": "."},
-                        "glob_filter": {"type": "string", "description": "파일 필터 glob 패턴 (예: *.py, *.ts)"},
-                        "case_insensitive": {"type": "boolean", "description": "대소문자 무시 여부 (기본: false)", "default": False},
-                        "context_lines": {"type": "integer", "description": "매치 전후로 표시할 컨텍스트 라인 수 (기본: 0)", "default": 0},
-                        "limit": {"type": "integer", "description": "최대 매치 수 (기본: 50)", "default": 50},
+                        "path": {
+                            "type": "string",
+                            "description": "검색 시작 경로 (기본: 루트)",
+                            "default": ".",
+                        },
+                        "glob_filter": {
+                            "type": "string",
+                            "description": "파일 필터 glob 패턴 (예: *.py, *.ts)",
+                        },
+                        "case_insensitive": {
+                            "type": "boolean",
+                            "description": "대소문자 무시 여부 (기본: false)",
+                            "default": False,
+                        },
+                        "context_lines": {
+                            "type": "integer",
+                            "description": "매치 전후로 표시할 컨텍스트 라인 수 (기본: 0)",
+                            "default": 0,
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "최대 매치 수 (기본: 50)",
+                            "default": 50,
+                        },
                     },
                     "required": ["pattern"],
                 },
@@ -225,9 +285,21 @@ def get_unified_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "탐색 시작 경로 (기본: 루트)", "default": "."},
-                        "recursive": {"type": "boolean", "description": "하위 디렉토리 재귀 탐색 (기본: false)", "default": False},
-                        "max_depth": {"type": "integer", "description": "최대 탐색 깊이 (기본: 3)", "default": 3},
+                        "path": {
+                            "type": "string",
+                            "description": "탐색 시작 경로 (기본: 루트)",
+                            "default": ".",
+                        },
+                        "recursive": {
+                            "type": "boolean",
+                            "description": "하위 디렉토리 재귀 탐색 (기본: false)",
+                            "default": False,
+                        },
+                        "max_depth": {
+                            "type": "integer",
+                            "description": "최대 탐색 깊이 (기본: 3)",
+                            "default": 3,
+                        },
                     },
                 },
             },
@@ -244,7 +316,10 @@ def get_unified_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "patch": {"type": "string", "description": "unified diff 형식의 패치 텍스트"},
+                        "patch": {
+                            "type": "string",
+                            "description": "unified diff 형식의 패치 텍스트",
+                        },
                     },
                     "required": ["patch"],
                 },
@@ -254,34 +329,44 @@ def get_unified_tools() -> List[Dict[str, Any]]:
 
     # bash is workspace-only
     if has_workspace:
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": "bash",
-                "description": (
-                    "워크스페이스에서 셸 명령을 실행합니다 (워크스페이스 전용). "
-                    "빌드, 테스트, 린트, 의존성 설치, git 명령 등에 사용하세요. "
-                    "보안상 파일 삭제(rm), 이동(mv) 등 파괴적 명령은 차단됩니다. "
-                    "타임아웃 기본 30초, 최대 120초."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "command": {"type": "string", "description": "실행할 셸 명령어"},
-                        "cwd": {"type": "string", "description": "작업 디렉토리 (상대 경로, 생략 시 루트)"},
-                        "timeout": {"type": "integer", "description": "타임아웃 초 (기본: 30, 최대: 120)", "default": 30},
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "bash",
+                    "description": (
+                        "워크스페이스에서 셸 명령을 실행합니다 (워크스페이스 전용). "
+                        "빌드, 테스트, 린트, 의존성 설치, git 명령 등에 사용하세요. "
+                        "보안상 파일 삭제(rm), 이동(mv) 등 파괴적 명령은 차단됩니다. "
+                        "타임아웃 기본 30초, 최대 120초."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string", "description": "실행할 셸 명령어"},
+                            "cwd": {
+                                "type": "string",
+                                "description": "작업 디렉토리 (상대 경로, 생략 시 루트)",
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "타임아웃 초 (기본: 30, 최대: 120)",
+                                "default": 30,
+                            },
+                        },
+                        "required": ["command"],
                     },
-                    "required": ["command"],
                 },
-            },
-        })
+            }
+        )
 
     return tools
 
 
 # --- Handlers ---
 
-async def handle_unified_tool_call(tool_name: str, args: Dict[str, Any]) -> "str | Dict[str, Any]":
+
+async def handle_unified_tool_call(tool_name: str, args: dict[str, Any]) -> "str | dict[str, Any]":
     """Route unified tool calls to appropriate backend."""
     ctx = _resolve_context(args)
 
@@ -309,19 +394,22 @@ async def handle_unified_tool_call(tool_name: str, args: Dict[str, Any]) -> "str
         return f"Error: {e}"
 
 
-def _handle_read_file(ctx: str, args: Dict[str, Any]) -> str:
+def _handle_read_file(ctx: str, args: dict[str, Any]) -> str:
     path = args.get("path", "")
     if not path:
-        return "Error: path is required. 예: {\"path\": \"folder/filename.ext\", \"content\": \"...\"}"
+        return 'Error: path is required. 예: {"path": "folder/filename.ext", "content": "..."}'
 
     if ctx == "workspace":
-        active = workspace_manager.get_active()
+        owner_user_id = _current_owner_user_id()
+        active = workspace_manager.get_active(owner_user_id=owner_user_id)
         if not active:
             return "Error: 활성 워크스페이스가 없습니다."
         fc = workspace_manager.read_file(
-            active.id, path,
+            active.id,
+            path,
             offset=args.get("offset", 0),
             limit=args.get("limit"),
+            owner_user_id=owner_user_id,
         )
         lines = fc.content.split("\n")
         offset = fc.offset
@@ -354,6 +442,7 @@ def _handle_read_file(ctx: str, args: Dict[str, Any]) -> str:
 
     elif ctx == "skill":
         from open_agent.core.skill_manager import skill_manager
+
         skill_name = args.get("_skill_name", "")
         if not skill_name:
             return "Error: skill_name is required for skill context"
@@ -365,17 +454,23 @@ def _handle_read_file(ctx: str, args: Dict[str, Any]) -> str:
     return "Error: 활성 워크스페이스 또는 페이지가 없습니다."
 
 
-def _handle_write_file(ctx: str, args: Dict[str, Any]) -> str:
+def _handle_write_file(ctx: str, args: dict[str, Any]) -> str:
     path = args.get("path", "")
     content = args.get("content", "")
     if not path:
-        return "Error: path is required. 예: {\"path\": \"folder/filename.ext\", \"content\": \"...\"}"
+        return 'Error: path is required. 예: {"path": "folder/filename.ext", "content": "..."}'
 
     if ctx == "workspace":
-        active = workspace_manager.get_active()
+        owner_user_id = _current_owner_user_id()
+        active = workspace_manager.get_active(owner_user_id=owner_user_id)
         if not active:
             return "Error: 활성 워크스페이스가 없습니다."
-        return workspace_manager.write_file(active.id, path, content)
+        return workspace_manager.write_file(
+            active.id,
+            path,
+            content,
+            owner_user_id=owner_user_id,
+        )
 
     elif ctx == "page":
         page = page_manager.get_active_page()
@@ -406,6 +501,7 @@ def _handle_write_file(ctx: str, args: Dict[str, Any]) -> str:
 
     elif ctx == "skill":
         from open_agent.core.skill_manager import skill_manager
+
         skill_name = args.get("_skill_name", "")
         if not skill_name:
             return "Error: skill_name is required for skill context"
@@ -430,7 +526,7 @@ def _handle_write_file(ctx: str, args: Dict[str, Any]) -> str:
     return "Error: 활성 워크스페이스 또는 페이지가 없습니다."
 
 
-def _handle_edit_file(ctx: str, args: Dict[str, Any]) -> str:
+def _handle_edit_file(ctx: str, args: dict[str, Any]) -> str:
     from open_agent.core.fuzzy import find_closest_match, fuzzy_find, fuzzy_replace
 
     path = args.get("path", "")
@@ -439,21 +535,25 @@ def _handle_edit_file(ctx: str, args: Dict[str, Any]) -> str:
     replace_all = args.get("replace_all", False)
 
     if not path:
-        return "Error: path is required. 예: {\"path\": \"folder/filename.ext\", \"content\": \"...\"}"
+        return 'Error: path is required. 예: {"path": "folder/filename.ext", "content": "..."}'
     if not old_string:
         return "Error: old_string은 비어 있을 수 없습니다."
 
     # Read content based on context
     if ctx == "workspace":
-        active = workspace_manager.get_active()
+        owner_user_id = _current_owner_user_id()
+        active = workspace_manager.get_active(owner_user_id=owner_user_id)
         if not active:
             return "Error: 활성 워크스페이스가 없습니다."
         from open_agent.models.workspace import EditFileRequest
+
         req = EditFileRequest(
-            path=path, old_string=old_string,
-            new_string=new_string, replace_all=replace_all,
+            path=path,
+            old_string=old_string,
+            new_string=new_string,
+            replace_all=replace_all,
         )
-        return workspace_manager.edit_file(active.id, req)
+        return workspace_manager.edit_file(active.id, req, owner_user_id=owner_user_id)
 
     elif ctx == "page":
         page = page_manager.get_active_page()
@@ -464,7 +564,7 @@ def _handle_edit_file(ctx: str, args: Dict[str, Any]) -> str:
         if content is None:
             return f"Error: 파일 '{path}'을(를) 찾을 수 없습니다."
 
-        match_mode, pos, matched_len = fuzzy_find(content, old_string)
+        match_mode, _pos, _matched_len = fuzzy_find(content, old_string)
 
         if match_mode is None:
             line_count = len(content.splitlines())
@@ -486,7 +586,11 @@ def _handle_edit_file(ctx: str, args: Dict[str, Any]) -> str:
                     f"Error: old_string이 '{path}'에서 {count}번 발견되었습니다. "
                     "replace_all=true로 모두 교체하거나, 더 고유한 문자열을 지정하세요."
                 )
-            new_content = content.replace(old_string, new_string) if replace_all else content.replace(old_string, new_string, 1)
+            new_content = (
+                content.replace(old_string, new_string)
+                if replace_all
+                else content.replace(old_string, new_string, 1)
+            )
             replaced = count if replace_all else 1
         else:
             new_content = fuzzy_replace(content, old_string, new_string, match_mode)
@@ -503,21 +607,24 @@ def _handle_edit_file(ctx: str, args: Dict[str, Any]) -> str:
 
     elif ctx == "skill":
         from open_agent.core.skill_manager import skill_manager
+
         skill_name = args.get("_skill_name", "")
         if not skill_name:
             return "Error: skill_name is required for skill context"
-        return skill_manager._handle_edit_skill_script({
-            "skill_name": skill_name,
-            "filename": path,
-            "old_string": old_string,
-            "new_string": new_string,
-            "replace_all": replace_all,
-        })
+        return skill_manager._handle_edit_skill_script(
+            {
+                "skill_name": skill_name,
+                "filename": path,
+                "old_string": old_string,
+                "new_string": new_string,
+                "replace_all": replace_all,
+            }
+        )
 
     return "Error: 활성 워크스페이스 또는 페이지가 없습니다."
 
 
-def _handle_search(ctx: str, args: Dict[str, Any]) -> str:
+def _handle_search(ctx: str, args: dict[str, Any]) -> str:
     from open_agent.core.grep_engine import grep
 
     pattern = args.get("pattern", "")
@@ -531,10 +638,11 @@ def _handle_search(ctx: str, args: Dict[str, Any]) -> str:
         return "Error: pattern is required"
 
     if ctx == "workspace":
-        active = workspace_manager.get_active()
+        owner_user_id = _current_owner_user_id()
+        active = workspace_manager.get_active(owner_user_id=owner_user_id)
         if not active:
             return "Error: 활성 워크스페이스가 없습니다."
-        ws = workspace_manager.get_workspace(active.id)
+        ws = workspace_manager.get_workspace(active.id, owner_user_id=owner_user_id)
         if not ws:
             return "Error: Workspace not found"
         root = Path(ws.path).resolve()
@@ -550,26 +658,42 @@ def _handle_search(ctx: str, args: Dict[str, Any]) -> str:
         # Get page's filesystem directory for Rust grep
         page_dir = page_manager.get_page_dir(page.id)
         if page_dir and page_dir.is_dir():
-            return grep(page_dir, page_dir, pattern, glob_filter, case_insensitive, context_lines, limit)
+            return grep(
+                page_dir, page_dir, pattern, glob_filter, case_insensitive, context_lines, limit
+            )
         # Fallback: single file page
         html_path = page_manager.get_html_path(page.id)
         if html_path and html_path.is_file():
-            return grep(html_path.parent, html_path, pattern, glob_filter, case_insensitive, context_lines, limit)
+            return grep(
+                html_path.parent,
+                html_path,
+                pattern,
+                glob_filter,
+                case_insensitive,
+                context_lines,
+                limit,
+            )
         return "Error: 페이지 파일을 찾을 수 없습니다."
 
     return "Error: 활성 워크스페이스 또는 페이지가 없습니다."
 
 
-def _handle_list_files(ctx: str, args: Dict[str, Any]) -> str:
+def _handle_list_files(ctx: str, args: dict[str, Any]) -> str:
     if ctx == "workspace":
-        active = workspace_manager.get_active()
+        owner_user_id = _current_owner_user_id()
+        active = workspace_manager.get_active(owner_user_id=owner_user_id)
         if not active:
             return "Error: 활성 워크스페이스가 없습니다."
         path = args.get("path", ".")
         recursive = args.get("recursive", False)
         max_depth = args.get("max_depth", 3) if recursive else 1
-        nodes = workspace_manager.get_file_tree(active.id, path, max_depth)
-        lines: List[str] = []
+        nodes = workspace_manager.get_file_tree(
+            active.id,
+            path,
+            max_depth,
+            owner_user_id=owner_user_id,
+        )
+        lines: list[str] = []
         _format_tree(nodes, lines, "")
         if not lines:
             return f"Directory '{path}' is empty."
@@ -589,7 +713,7 @@ def _handle_list_files(ctx: str, args: Dict[str, Any]) -> str:
     return "Error: 활성 워크스페이스 또는 페이지가 없습니다."
 
 
-def _format_tree(nodes: List[Any], lines: List[str], prefix: str) -> None:
+def _format_tree(nodes: list[Any], lines: list[str], prefix: str) -> None:
     for node in nodes:
         if node.type == "dir":
             lines.append(f"{prefix}{node.name}/")
@@ -609,24 +733,29 @@ def _format_size(size: int) -> str:
         return f"{size / (1024 * 1024):.1f}MB"
 
 
-def _handle_apply_patch(ctx: str, args: Dict[str, Any]) -> str:
-    from open_agent.core.fuzzy import apply_patch_to_files, apply_patch_to_string
+def _handle_apply_patch(ctx: str, args: dict[str, Any]) -> str:
+    from open_agent.core.fuzzy import apply_patch_to_files
 
     patch_text = args.get("patch", "")
     if not patch_text.strip():
         return "Error: patch text is empty"
 
     if ctx == "workspace":
-        active = workspace_manager.get_active()
+        owner_user_id = _current_owner_user_id()
+        active = workspace_manager.get_active(owner_user_id=owner_user_id)
         if not active:
             return "Error: 활성 워크스페이스가 없습니다."
-        ws = workspace_manager.get_workspace(active.id)
+        ws = workspace_manager.get_workspace(active.id, owner_user_id=owner_user_id)
         if not ws:
             return "Error: Workspace not found"
         root = Path(ws.path).resolve()
 
         def path_validator(rel_path: str) -> Path:
-            return workspace_manager._resolve_safe_path(active.id, rel_path)
+            return workspace_manager._resolve_safe_path(
+                active.id,
+                rel_path,
+                owner_user_id=owner_user_id,
+            )
 
         return apply_patch_to_files(patch_text, str(root), path_validator=path_validator)
 
@@ -649,23 +778,27 @@ def _handle_apply_patch(ctx: str, args: Dict[str, Any]) -> str:
 
     elif ctx == "skill":
         from open_agent.core.skill_manager import skill_manager
+
         skill_name = args.get("_skill_name", "")
         filename = args.get("_filename", "")
         if skill_name and filename:
-            return skill_manager._handle_patch_skill_script({
-                "skill_name": skill_name,
-                "filename": filename,
-                "patch": patch_text,
-            })
+            return skill_manager._handle_patch_skill_script(
+                {
+                    "skill_name": skill_name,
+                    "filename": filename,
+                    "patch": patch_text,
+                }
+            )
         return "Error: skill_name and filename are required for skill context"
 
     return "Error: 활성 워크스페이스 또는 페이지가 없습니다."
 
 
-async def _handle_bash(args: Dict[str, Any]) -> "str | Dict[str, Any]":
+async def _handle_bash(args: dict[str, Any]) -> "str | dict[str, Any]":
     """Bash is always workspace-only."""
     from open_agent.core.workspace_tools import handle_workspace_tool_call
-    active = workspace_manager.get_active()
+
+    active = workspace_manager.get_active(owner_user_id=_current_owner_user_id())
     if not active:
         return "Error: bash는 워크스페이스 전용입니다. 워크스페이스를 먼저 활성화하세요."
     return await handle_workspace_tool_call("workspace_bash", args)

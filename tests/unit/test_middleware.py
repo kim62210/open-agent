@@ -8,9 +8,8 @@ from httpx import AsyncClient
 async def middleware_client():
     """httpx.AsyncClient with middleware attached."""
     import httpx
-    from httpx import ASGITransport
-
     from fastapi import FastAPI
+    from httpx import ASGITransport
     from open_agent.api.middleware import RequestLoggingMiddleware
 
     test_app = FastAPI()
@@ -49,6 +48,26 @@ class TestRequestLoggingMiddleware:
         """Errors propagate through middleware and result in 500."""
         with pytest.raises(ValueError, match="test error"):
             await middleware_client.get("/test-error")
+
+    async def test_sets_request_id_on_request_state(self):
+        import httpx
+        from fastapi import FastAPI, Request
+        from httpx import ASGITransport
+        from open_agent.api.middleware import RequestLoggingMiddleware
+
+        test_app = FastAPI()
+        test_app.add_middleware(RequestLoggingMiddleware)
+
+        @test_app.get("/request-id")
+        async def request_id(request: Request):
+            return {"request_id": getattr(request.state, "request_id", None)}
+
+        transport = ASGITransport(app=test_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/request-id")
+
+        assert resp.status_code == 200
+        assert resp.json()["request_id"]
 
     async def test_static_paths_not_logged(self, middleware_client: AsyncClient):
         """Static paths (/_next) skip detailed logging (no side-effects to test,

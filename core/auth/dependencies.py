@@ -11,6 +11,7 @@ from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from sqlalchemy import select
 
 from core.db.engine import async_session_factory
+from core.request_context import set_current_user_id
 
 logger = structlog.get_logger(__name__)
 
@@ -31,10 +32,12 @@ async def get_current_user(
     if token:
         user = await _validate_jwt(token)
         request.state.user = user
+        set_current_user_id(user["id"])
         return user
     if api_key:
         user = await _validate_api_key(api_key)
         request.state.user = user
+        set_current_user_id(user["id"])
         return user
     raise HTTPException(status_code=401, detail="Authentication required")
 

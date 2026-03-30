@@ -369,6 +369,13 @@ class TestManualControls:
             with pytest.raises(JobNotFoundError):
                 await scheduler.run_now("nope")
 
+    async def test_run_now_denies_missing_owner(self):
+        scheduler = JobScheduler()
+        with patch("open_agent.core.job_scheduler.job_manager") as mock_jm:
+            mock_jm.get_job.return_value = None
+            with pytest.raises(JobNotFoundError):
+                await scheduler.run_now("job-1", owner_user_id="user-1")
+
     async def test_run_now_already_running(self):
         scheduler = JobScheduler()
         job = _make_job(job_id="running1")
@@ -383,13 +390,24 @@ class TestManualControls:
         scheduler = JobScheduler()
         mock_task = MagicMock()
         scheduler._running_tasks["stop1"] = mock_task
-        await scheduler.stop_job("stop1")
-        mock_task.cancel.assert_called_once()
+        with patch("open_agent.core.job_scheduler.job_manager") as mock_jm:
+            mock_jm.get_job.return_value = _make_job(job_id="stop1")
+            await scheduler.stop_job("stop1")
+            mock_task.cancel.assert_called_once()
 
     async def test_stop_job_not_running(self):
         scheduler = JobScheduler()
-        with pytest.raises(JobStateError):
-            await scheduler.stop_job("nope")
+        with patch("open_agent.core.job_scheduler.job_manager") as mock_jm:
+            mock_jm.get_job.return_value = _make_job(job_id="nope")
+            with pytest.raises(JobStateError):
+                await scheduler.stop_job("nope")
+
+    async def test_stop_job_denies_missing_owner(self):
+        scheduler = JobScheduler()
+        with patch("open_agent.core.job_scheduler.job_manager") as mock_jm:
+            mock_jm.get_job.return_value = None
+            with pytest.raises(JobNotFoundError):
+                await scheduler.stop_job("job-1", owner_user_id="user-1")
 
     def test_is_running(self):
         scheduler = JobScheduler()

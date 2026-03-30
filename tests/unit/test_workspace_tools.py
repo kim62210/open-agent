@@ -1,14 +1,10 @@
 """WorkspaceTools unit tests — file ops, command execution, security filters."""
 
-import re
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from open_agent.core.workspace_tools import (
-    DANGEROUS_PATTERNS,
-    RESTRICTED_PATTERNS,
     WORKSPACE_TOOL_NAMES,
     _detect_sensitive_env_access,
     _format_size,
@@ -22,6 +18,8 @@ from open_agent.core.workspace_tools import (
     handle_workspace_tool_call,
 )
 from open_agent.models.workspace import FileContent, FileTreeNode, WorkspaceInfo
+
+from core.request_context import clear_current_user_id, set_current_user_id
 
 
 @pytest.fixture()
@@ -254,6 +252,17 @@ class TestHandleNoActive:
         assert "Error" in result
         assert "No active workspace" in result
 
+    async def test_uses_current_user_for_active_workspace(self, mock_ws, active_workspace):
+        set_current_user_id("user-1")
+        mock_ws.get_active.return_value = active_workspace
+
+        try:
+            await handle_workspace_tool_call("workspace_list_dir", {"path": "."})
+        finally:
+            clear_current_user_id()
+
+        mock_ws.get_active.assert_called_with(owner_user_id="user-1")
+
 
 class TestReadFile:
     """workspace_read_file handler."""
@@ -314,7 +323,12 @@ class TestWriteFile:
             },
         )
 
-        mock_ws.write_file.assert_called_once_with("ws01", "src/new.py", "print('new')")
+        mock_ws.write_file.assert_called_once_with(
+            "ws01",
+            "src/new.py",
+            "print('new')",
+            owner_user_id=None,
+        )
         assert "written" in result
 
 

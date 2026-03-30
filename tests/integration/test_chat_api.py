@@ -131,6 +131,24 @@ class TestChatEndpoint:
             )
         assert resp.status_code == 200
 
+    async def test_async_chat_returns_run_stub(self, chat_client: AsyncClient):
+        with patch("open_agent.api.endpoints.chat.run_manager") as mock_rm:
+            mock_rm.create_run = AsyncMock(
+                return_value=MagicMock(id="run-async-1", status="running")
+            )
+            mock_rm.append_event = AsyncMock()
+            mock_rm.register_background_task = MagicMock()
+            resp = await chat_client.post(
+                "/api/chat/async",
+                json={"messages": [{"role": "user", "content": "Hi async"}]},
+            )
+
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["run_id"] == "run-async-1"
+        assert data["status"] == "running"
+        mock_rm.register_background_task.assert_called_once()
+
 
 class TestChatStreamEndpoint:
     """POST /api/chat/stream"""
@@ -185,6 +203,24 @@ class TestChatStreamEndpoint:
             )
         assert resp.status_code == 200
         assert "error" in resp.text
+
+    async def test_stream_without_done_still_finishes_run(self, chat_client: AsyncClient):
+        async def incomplete_stream(*args, **kwargs):
+            yield {"type": "token", "content": "partial"}
+
+        with patch("open_agent.api.endpoints.chat.orchestrator") as mock_orch:
+            with patch("open_agent.api.endpoints.chat.run_manager") as mock_rm:
+                mock_rm.create_run = AsyncMock(return_value=MagicMock(id="run-stream-1"))
+                mock_rm.append_event = AsyncMock()
+                mock_rm.finish_run = AsyncMock()
+                mock_orch.run_stream = incomplete_stream
+                resp = await chat_client.post(
+                    "/api/chat/stream",
+                    json={"messages": [{"role": "user", "content": "Hi"}]},
+                )
+
+        assert resp.status_code == 200
+        mock_rm.finish_run.assert_awaited()
 
 
 class TestChatHelpers:

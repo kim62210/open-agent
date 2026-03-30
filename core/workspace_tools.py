@@ -1,16 +1,21 @@
 import asyncio
-import fnmatch
 import logging
 import os
 import re
 import shutil
-import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from open_agent.core.workspace_manager import workspace_manager, IGNORED_DIRS, IGNORED_FILES
+from open_agent.core.workspace_manager import IGNORED_DIRS, IGNORED_FILES, workspace_manager
+
+from core.request_context import get_current_user_id
 
 logger = logging.getLogger(__name__)
+
+
+def _current_owner_user_id() -> str | None:
+    return get_current_user_id()
+
 
 # Windows 대소문자 무시를 위한 소문자 변환 집합
 IGNORED_DIRS_LOWER = {d.lower() for d in IGNORED_DIRS}
@@ -87,7 +92,7 @@ _SENSITIVE_ENV_KEYS = {
 _SENSITIVE_ENV_PATTERNS = ("_KEY", "_SECRET", "_TOKEN", "_PASSWORD", "_CREDENTIAL")
 
 
-def get_sanitized_env() -> Dict[str, str]:
+def get_sanitized_env() -> dict[str, str]:
     """현재 환경변수에서 민감 키를 제거한 사본 반환"""
 
     def _is_sensitive(key: str) -> bool:
@@ -121,7 +126,7 @@ RESTRICTED_PATTERNS = [
 ]
 
 
-def _is_dangerous_command(command: str) -> Optional[str]:
+def _is_dangerous_command(command: str) -> str | None:
     """시스템 파괴 명령 검사"""
     for pattern in DANGEROUS_PATTERNS:
         if re.search(pattern, command):
@@ -129,7 +134,7 @@ def _is_dangerous_command(command: str) -> Optional[str]:
     return None
 
 
-def _is_restricted_command(command: str) -> Optional[str]:
+def _is_restricted_command(command: str) -> str | None:
     """제한된 작업 검사 — 명확한 한글 메시지 반환"""
     for pattern, desc in RESTRICTED_PATTERNS:
         if re.search(pattern, command):
@@ -143,7 +148,7 @@ def _is_restricted_command(command: str) -> Optional[str]:
     return None
 
 
-def _detect_sensitive_env_access(command: str) -> Optional[str]:
+def _detect_sensitive_env_access(command: str) -> str | None:
     """명령어에서 민감 환경변수 참조를 감지하여 안내 메시지 반환"""
     referenced = []
     for key in _SENSITIVE_ENV_KEYS:
@@ -159,9 +164,9 @@ def _detect_sensitive_env_access(command: str) -> Optional[str]:
     return None
 
 
-def get_workspace_extra_tools() -> List[Dict[str, Any]]:
+def get_workspace_extra_tools() -> list[dict[str, Any]]:
     """Return workspace-only tools not covered by unified tools (rename, glob)."""
-    active = workspace_manager.get_active()
+    active = workspace_manager.get_active(owner_user_id=_current_owner_user_id())
     if not active:
         return []
     return [
@@ -208,9 +213,9 @@ def get_workspace_extra_tools() -> List[Dict[str, Any]]:
     ]
 
 
-def get_workspace_tools() -> List[Dict[str, Any]]:
+def get_workspace_tools() -> list[dict[str, Any]]:
     """활성 워크스페이스가 있을 때만 도구 목록 반환 (legacy — backward compat)"""
-    active = workspace_manager.get_active()
+    active = workspace_manager.get_active(owner_user_id=_current_owner_user_id())
     if not active:
         return []
 
@@ -482,9 +487,9 @@ def get_workspace_tools() -> List[Dict[str, Any]]:
     ]
 
 
-def get_workspace_system_prompt() -> Optional[str]:
+def get_workspace_system_prompt() -> str | None:
     """활성 워크스페이스 정보를 시스템 프롬프트로"""
-    active = workspace_manager.get_active()
+    active = workspace_manager.get_active(owner_user_id=_current_owner_user_id())
     if not active:
         return None
 
@@ -506,30 +511,31 @@ def get_workspace_system_prompt() -> Optional[str]:
     )
 
 
-async def handle_workspace_tool_call(name: str, args: Dict[str, Any]) -> "str | Dict[str, Any]":
-    active = workspace_manager.get_active()
+async def handle_workspace_tool_call(name: str, args: dict[str, Any]) -> "str | dict[str, Any]":
+    owner_user_id = _current_owner_user_id()
+    active = workspace_manager.get_active(owner_user_id=owner_user_id)
     if not active:
         return "Error: No active workspace. Please activate a workspace first."
 
     try:
         if name == "workspace_read_file":
-            return _handle_read_file(active.id, args)
+            return _handle_read_file(active.id, args, owner_user_id=owner_user_id)
         elif name == "workspace_write_file":
-            return _handle_write_file(active.id, args)
+            return _handle_write_file(active.id, args, owner_user_id=owner_user_id)
         elif name == "workspace_edit_file":
-            return _handle_edit_file(active.id, args)
+            return _handle_edit_file(active.id, args, owner_user_id=owner_user_id)
         elif name == "workspace_apply_patch":
-            return _handle_apply_patch(active.id, args)
+            return _handle_apply_patch(active.id, args, owner_user_id=owner_user_id)
         elif name == "workspace_rename":
-            return _handle_rename(active.id, args)
+            return _handle_rename(active.id, args, owner_user_id=owner_user_id)
         elif name == "workspace_list_dir":
-            return _handle_list_dir(active.id, args)
+            return _handle_list_dir(active.id, args, owner_user_id=owner_user_id)
         elif name == "workspace_glob":
-            return _handle_glob(active.id, args)
+            return _handle_glob(active.id, args, owner_user_id=owner_user_id)
         elif name == "workspace_grep":
-            return _handle_grep(active.id, args)
+            return _handle_grep(active.id, args, owner_user_id=owner_user_id)
         elif name == "workspace_bash":
-            return await _handle_bash(active.id, args)
+            return await _handle_bash(active.id, args, owner_user_id=owner_user_id)
         else:
             return f"Error: Unknown workspace tool '{name}'"
     except ValueError as e:
@@ -539,12 +545,13 @@ async def handle_workspace_tool_call(name: str, args: Dict[str, Any]) -> "str | 
         return f"Error: {e}"
 
 
-def _handle_read_file(ws_id: str, args: Dict[str, Any]) -> str:
+def _handle_read_file(ws_id: str, args: dict[str, Any], owner_user_id: str | None = None) -> str:
     fc = workspace_manager.read_file(
         ws_id,
         args["path"],
         offset=args.get("offset", 0),
         limit=args.get("limit"),
+        owner_user_id=owner_user_id,
     )
     lines = fc.content.split("\n")
     offset = fc.offset
@@ -555,11 +562,16 @@ def _handle_read_file(ws_id: str, args: Dict[str, Any]) -> str:
     return f"{header}\n{numbered}"
 
 
-def _handle_write_file(ws_id: str, args: Dict[str, Any]) -> str:
-    return workspace_manager.write_file(ws_id, args["path"], args["content"])
+def _handle_write_file(ws_id: str, args: dict[str, Any], owner_user_id: str | None = None) -> str:
+    return workspace_manager.write_file(
+        ws_id,
+        args["path"],
+        args["content"],
+        owner_user_id=owner_user_id,
+    )
 
 
-def _handle_edit_file(ws_id: str, args: Dict[str, Any]) -> str:
+def _handle_edit_file(ws_id: str, args: dict[str, Any], owner_user_id: str | None = None) -> str:
     from open_agent.models.workspace import EditFileRequest
 
     req = EditFileRequest(
@@ -568,13 +580,13 @@ def _handle_edit_file(ws_id: str, args: Dict[str, Any]) -> str:
         new_string=args["new_string"],
         replace_all=args.get("replace_all", False),
     )
-    return workspace_manager.edit_file(ws_id, req)
+    return workspace_manager.edit_file(ws_id, req, owner_user_id=owner_user_id)
 
 
-def _handle_apply_patch(ws_id: str, args: Dict[str, Any]) -> str:
+def _handle_apply_patch(ws_id: str, args: dict[str, Any], owner_user_id: str | None = None) -> str:
     from open_agent.core.fuzzy import apply_patch_to_files
 
-    ws = workspace_manager.get_workspace(ws_id)
+    ws = workspace_manager.get_workspace(ws_id, owner_user_id=owner_user_id)
     if not ws:
         return "Error: Workspace not found"
 
@@ -584,22 +596,27 @@ def _handle_apply_patch(ws_id: str, args: Dict[str, Any]) -> str:
         return "Error: patch text is empty"
 
     def path_validator(rel_path: str) -> Path:
-        return workspace_manager._resolve_safe_path(ws_id, rel_path)
+        return workspace_manager._resolve_safe_path(ws_id, rel_path, owner_user_id=owner_user_id)
 
     return apply_patch_to_files(patch_text, str(root), path_validator=path_validator)
 
 
-def _handle_rename(ws_id: str, args: Dict[str, Any]) -> str:
-    return workspace_manager.rename_file(ws_id, args["old_path"], args["new_path"])
+def _handle_rename(ws_id: str, args: dict[str, Any], owner_user_id: str | None = None) -> str:
+    return workspace_manager.rename_file(
+        ws_id,
+        args["old_path"],
+        args["new_path"],
+        owner_user_id=owner_user_id,
+    )
 
 
-def _handle_list_dir(ws_id: str, args: Dict[str, Any]) -> str:
+def _handle_list_dir(ws_id: str, args: dict[str, Any], owner_user_id: str | None = None) -> str:
     path = args.get("path", ".")
     recursive = args.get("recursive", False)
     max_depth = args.get("max_depth", 3) if recursive else 1
 
-    nodes = workspace_manager.get_file_tree(ws_id, path, max_depth)
-    lines: List[str] = []
+    nodes = workspace_manager.get_file_tree(ws_id, path, max_depth, owner_user_id=owner_user_id)
+    lines: list[str] = []
     _format_tree(nodes, lines, "")
 
     if not lines:
@@ -607,7 +624,7 @@ def _handle_list_dir(ws_id: str, args: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _format_tree(nodes: List[Any], lines: List[str], prefix: str) -> None:
+def _format_tree(nodes: list[Any], lines: list[str], prefix: str) -> None:
     for node in nodes:
         if node.type == "dir":
             lines.append(f"{prefix}{node.name}/")
@@ -627,15 +644,15 @@ def _format_size(size: int) -> str:
         return f"{size / (1024 * 1024):.1f}MB"
 
 
-def _handle_glob(ws_id: str, args: Dict[str, Any]) -> str:
+def _handle_glob(ws_id: str, args: dict[str, Any], owner_user_id: str | None = None) -> str:
     pattern = args["pattern"]
     limit = args.get("limit", 100)
-    ws = workspace_manager.get_workspace(ws_id)
+    ws = workspace_manager.get_workspace(ws_id, owner_user_id=owner_user_id)
     if not ws:
         return "Error: Workspace not found"
 
     root = Path(ws.path)
-    matches: List[str] = []
+    matches: list[str] = []
     for p in root.rglob(pattern):
         if any(part.lower() in IGNORED_DIRS_LOWER for part in p.relative_to(root).parts):
             continue
@@ -653,7 +670,7 @@ def _handle_glob(ws_id: str, args: Dict[str, Any]) -> str:
     return result
 
 
-def _handle_grep(ws_id: str, args: Dict[str, Any]) -> str:
+def _handle_grep(ws_id: str, args: dict[str, Any], owner_user_id: str | None = None) -> str:
     pattern = args["pattern"]
     search_path = args.get("path", ".")
     glob_filter = args.get("glob_filter")
@@ -661,7 +678,7 @@ def _handle_grep(ws_id: str, args: Dict[str, Any]) -> str:
     context_lines = args.get("context", 0)
     limit = args.get("limit", 50)
 
-    ws = workspace_manager.get_workspace(ws_id)
+    ws = workspace_manager.get_workspace(ws_id, owner_user_id=owner_user_id)
     if not ws:
         return "Error: Workspace not found"
 
@@ -723,7 +740,7 @@ def _handle_grep_rust(
     root: Path,
     target: Path,
     pattern: str,
-    glob_filter: Optional[str],
+    glob_filter: str | None,
     case_insensitive: bool,
     context_lines: int,
     limit: int,
@@ -742,7 +759,7 @@ def _handle_grep_rust(
         return f"No matches for pattern '{pattern}'"
 
     # Format output similar to ripgrep style
-    lines: List[str] = []
+    lines: list[str] = []
     root_str = str(root)
     prev_path = None
 
@@ -781,7 +798,7 @@ def _handle_grep_rg(
     root: Path,
     target: Path,
     pattern: str,
-    glob_filter: Optional[str],
+    glob_filter: str | None,
     case_insensitive: bool,
     context_lines: int,
     limit: int,
@@ -826,17 +843,17 @@ def _handle_grep_rg(
 
     # 전역 limit 적용 (rg --max-count는 파일당이므로 후처리 필요)
     lines = output.splitlines()
-    match_lines = [l for l in lines if l and not l.startswith("--")]
+    match_lines = [line for line in lines if line and not line.startswith("--")]
     if len(match_lines) > limit:
         # limit까지만 잘라서 재구성
         kept = 0
         trimmed = []
-        for l in lines:
-            if l and not l.startswith("--"):
+        for line in lines:
+            if line and not line.startswith("--"):
                 kept += 1
                 if kept > limit:
                     break
-            trimmed.append(l)
+            trimmed.append(line)
         output = "\n".join(trimmed)
 
     if len(output) > 100000:
@@ -856,7 +873,7 @@ def _handle_grep_python(
     root: Path,
     target: Path,
     pattern: str,
-    glob_filter: Optional[str],
+    glob_filter: str | None,
     case_insensitive: bool,
     context_lines: int,
     limit: int,
@@ -870,7 +887,7 @@ def _handle_grep_python(
     except re.error as e:
         return f"Error: Invalid regex pattern: {e}"
 
-    results: List[str] = []
+    results: list[str] = []
     match_count = 0
 
     if target.is_file():
@@ -894,7 +911,7 @@ def _handle_grep_python(
             continue
 
         file_lines = content.split("\n")
-        file_matches: List[str] = []
+        file_matches: list[str] = []
 
         for i, line in enumerate(file_lines):
             if regex.search(line):
@@ -922,7 +939,9 @@ def _handle_grep_python(
     return header + "\n".join(results)
 
 
-async def _handle_bash(ws_id: str, args: Dict[str, Any]) -> "str | Dict[str, Any]":
+async def _handle_bash(
+    ws_id: str, args: dict[str, Any], owner_user_id: str | None = None
+) -> "str | dict[str, Any]":
     command = args["command"]
     cwd_rel = args.get("cwd")
     timeout = min(args.get("timeout", 30), 120)
@@ -936,11 +955,11 @@ async def _handle_bash(ws_id: str, args: Dict[str, Any]) -> "str | Dict[str, Any
     if restricted:
         return restricted
 
-    ws = workspace_manager.get_workspace(ws_id)
+    ws = workspace_manager.get_workspace(ws_id, owner_user_id=owner_user_id)
     if not ws:
         return "Error: Workspace not found"
 
-    root = Path(ws.path).resolve()
+    root = await asyncio.to_thread(lambda: Path(ws.path).resolve())
 
     if cwd_rel:
         cwd = (root / cwd_rel).resolve()
@@ -980,9 +999,9 @@ async def _handle_bash(ws_id: str, args: Dict[str, Any]) -> "str | Dict[str, Any
         return bool(_NETWORK_COMMANDS.search(cmd))
 
     # Layer 1: OS 네이티브 샌드박스 (커널 레벨 격리)
-    from open_agent.core.sandbox import sandbox_manager, SandboxPolicy
+    from open_agent.core.sandbox import SandboxPolicy, sandbox_manager
 
-    def _try_escalation(violation: str, stderr_preview: str) -> "Dict[str, Any] | None":
+    def _try_escalation(violation: str, stderr_preview: str) -> "dict[str, Any] | None":
         escalation = sandbox_manager.request_escalation(SandboxPolicy.NETWORK_ALLOWED)
         if escalation.get("needed"):
             return {
@@ -1046,7 +1065,7 @@ async def _handle_bash(ws_id: str, args: Dict[str, Any]) -> "str | Dict[str, Any
             return esc
 
     # Format output
-    output_parts: List[str] = []
+    output_parts: list[str] = []
     stdout_text = result.get("stdout", "")
     stderr_text = result.get("stderr", "")
 

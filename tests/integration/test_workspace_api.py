@@ -210,7 +210,9 @@ class TestFileTree:
                 params={"path": "src", "max_depth": 2},
             )
         assert resp.status_code == 200
-        mock_wm.get_file_tree.assert_called_once_with("ws-1", "src", 2)
+        mock_wm.get_file_tree.assert_called_once_with(
+            "ws-1", "src", 2, owner_user_id="test-user-id"
+        )
 
 
 class TestReadFile:
@@ -243,7 +245,9 @@ class TestReadFile:
                 params={"path": "main.py", "offset": 4, "limit": 1},
             )
         assert resp.status_code == 200
-        mock_wm.read_file.assert_called_once_with("ws-1", "main.py", 4, 1)
+        mock_wm.read_file.assert_called_once_with(
+            "ws-1", "main.py", 4, 1, owner_user_id="test-user-id"
+        )
 
 
 class TestWriteFile:
@@ -259,6 +263,9 @@ class TestWriteFile:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        mock_wm.write_file.assert_called_once_with(
+            "ws-1", "test.py", "print('test')", owner_user_id="test-user-id"
+        )
 
 
 class TestEditFile:
@@ -274,6 +281,8 @@ class TestEditFile:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        mock_wm.edit_file.assert_called_once()
+        assert mock_wm.edit_file.call_args.kwargs["owner_user_id"] == "test-user-id"
 
     async def test_edit_file_value_error(self, workspace_client: AsyncClient):
         """Returns 400 when edit fails with ValueError."""
@@ -300,6 +309,9 @@ class TestRenameFile:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        mock_wm.rename_file.assert_called_once_with(
+            "ws-1", "old.py", "new.py", owner_user_id="test-user-id"
+        )
 
 
 class TestMkdir:
@@ -315,6 +327,7 @@ class TestMkdir:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        mock_wm.mkdir.assert_called_once_with("ws-1", "new_dir", owner_user_id="test-user-id")
 
 
 class TestDeleteFile:
@@ -330,6 +343,7 @@ class TestDeleteFile:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        mock_wm.delete_path.assert_called_once_with("ws-1", "old.py", owner_user_id="test-user-id")
 
 
 class TestBrowseDirectory:
