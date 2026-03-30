@@ -93,9 +93,9 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["open_agent"]
+source = ["open_agent", "core", "api", "models"]
 branch = true
-omit = ["tests/*", "nexus_rust/*"]
+omit = ["tests/*", "nexus_rust/*", "core/db/migrate.py"]
 
 [tool.coverage.report]
 fail_under = 70
