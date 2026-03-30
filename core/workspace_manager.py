@@ -1,9 +1,8 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from open_agent.core.exceptions import (
     AlreadyExistsError,
@@ -21,9 +20,23 @@ from open_agent.models.workspace import (
 logger = logging.getLogger(__name__)
 
 IGNORED_DIRS = {
-    ".git", "node_modules", "__pycache__", ".venv", "venv",
-    ".next", "dist", "build", ".cache", "target", ".idea", ".vscode",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", "egg-info",
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".next",
+    "dist",
+    "build",
+    ".cache",
+    "target",
+    ".idea",
+    ".vscode",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    "egg-info",
 }
 IGNORED_DIRS_LOWER = {d.lower() for d in IGNORED_DIRS}
 IGNORED_FILES = {".DS_Store", "Thumbs.db"}
@@ -32,7 +45,8 @@ IGNORED_FILES = {".DS_Store", "Thumbs.db"}
 class WorkspaceManager:
     def __init__(self):
         self._lock = asyncio.Lock()
-        self._workspaces: Dict[str, WorkspaceInfo] = {}
+        self._workspaces: dict[str, WorkspaceInfo] = {}
+        self._owners: dict[str, str | None] = {}
 
     async def load_from_db(self) -> None:
         """Load all workspaces from database into in-memory cache."""
@@ -44,6 +58,7 @@ class WorkspaceManager:
                 repo = WorkspaceRepository(session)
                 rows = await repo.get_all()
                 self._workspaces.clear()
+                self._owners.clear()
                 for row in rows:
                     self._workspaces[row.id] = WorkspaceInfo(
                         id=row.id,
@@ -53,6 +68,7 @@ class WorkspaceManager:
                         created_at=row.created_at,
                         is_active=row.is_active,
                     )
+                    self._owners[row.id] = row.owner_user_id
                 logger.info(f"Loaded {len(self._workspaces)} workspaces from database")
 
     async def _persist_workspace(self, ws: WorkspaceInfo) -> None:
@@ -63,6 +79,7 @@ class WorkspaceManager:
         async with async_session_factory() as session:
             orm = WorkspaceORM(
                 id=ws.id,
+                owner_user_id=self._owners.get(ws.id),
                 name=ws.name,
                 path=ws.path,
                 description=ws.description,
@@ -74,9 +91,11 @@ class WorkspaceManager:
 
     # --- CRUD ---
 
-    async def create_workspace(self, name: str, path: str, description: str = "") -> WorkspaceInfo:
+    async def create_workspace(
+        self, name: str, path: str, description: str = "", owner_user_id: str | None = None
+    ) -> WorkspaceInfo:
         async with self._lock:
-            abs_path = Path(path).expanduser().resolve()
+            abs_path = await asyncio.to_thread(lambda: Path(path).expanduser().resolve())
             if not abs_path.is_dir():
                 raise NotFoundError(f"Directory not found: {path}")
 
@@ -86,26 +105,41 @@ class WorkspaceManager:
                 name=name,
                 path=str(abs_path),
                 description=description,
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
                 is_active=False,
             )
             self._workspaces[wid] = workspace
+            self._owners[wid] = owner_user_id
             await self._persist_workspace(workspace)
             logger.info(f"Created workspace: {name} ({abs_path})")
             return workspace
 
-    def get_all(self) -> List[WorkspaceInfo]:
-        return list(self._workspaces.values())
+    def get_all(self, owner_user_id: str | None = None) -> list[WorkspaceInfo]:
+        return [
+            workspace
+            for workspace_id, workspace in self._workspaces.items()
+            if owner_user_id is None or self._owners.get(workspace_id) == owner_user_id
+        ]
 
-    def get_workspace(self, workspace_id: str) -> Optional[WorkspaceInfo]:
+    def get_workspace(
+        self, workspace_id: str, owner_user_id: str | None = None
+    ) -> WorkspaceInfo | None:
+        if owner_user_id is not None and self._owners.get(workspace_id) != owner_user_id:
+            return None
         return self._workspaces.get(workspace_id)
 
     async def update_workspace(
-        self, workspace_id: str, name: Optional[str] = None, description: Optional[str] = None
-    ) -> Optional[WorkspaceInfo]:
+        self,
+        workspace_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        owner_user_id: str | None = None,
+    ) -> WorkspaceInfo | None:
         async with self._lock:
             ws = self._workspaces.get(workspace_id)
             if not ws:
+                return None
+            if owner_user_id is not None and self._owners.get(workspace_id) != owner_user_id:
                 return None
             if name is not None:
                 ws.name = name
@@ -115,9 +149,11 @@ class WorkspaceManager:
             await self._persist_workspace(ws)
             return ws
 
-    async def delete_workspace(self, workspace_id: str) -> bool:
+    async def delete_workspace(self, workspace_id: str, owner_user_id: str | None = None) -> bool:
         async with self._lock:
             if workspace_id not in self._workspaces:
+                return False
+            if owner_user_id is not None and self._owners.get(workspace_id) != owner_user_id:
                 return False
 
             from core.db.engine import async_session_factory
@@ -129,13 +165,18 @@ class WorkspaceManager:
                 await session.commit()
 
             self._workspaces.pop(workspace_id)
+            self._owners.pop(workspace_id, None)
             logger.info(f"Deleted workspace: {workspace_id}")
             return True
 
-    async def set_active(self, workspace_id: str) -> Optional[WorkspaceInfo]:
+    async def set_active(
+        self, workspace_id: str, owner_user_id: str | None = None
+    ) -> WorkspaceInfo | None:
         async with self._lock:
             ws = self._workspaces.get(workspace_id)
             if not ws:
+                return None
+            if owner_user_id is not None and self._owners.get(workspace_id) != owner_user_id:
                 return None
 
             from core.db.engine import async_session_factory
@@ -153,25 +194,32 @@ class WorkspaceManager:
             logger.info(f"Activated workspace: {ws.name}")
             return ws
 
-    async def deactivate(self) -> None:
+    async def deactivate(self, owner_user_id: str | None = None) -> None:
         async with self._lock:
-            from core.db.engine import async_session_factory
             from sqlalchemy import update
+
+            from core.db.engine import async_session_factory
             from core.db.models.workspace import WorkspaceORM
 
-            for w in self._workspaces.values():
-                w.is_active = False
+            for workspace_id, workspace in self._workspaces.items():
+                if owner_user_id is None or self._owners.get(workspace_id) == owner_user_id:
+                    workspace.is_active = False
 
             async with async_session_factory() as session:
-                await session.execute(update(WorkspaceORM).values(is_active=False))
+                stmt = update(WorkspaceORM).values(is_active=False)
+                if owner_user_id is not None:
+                    stmt = stmt.where(WorkspaceORM.owner_user_id == owner_user_id)
+                await session.execute(stmt)
                 await session.commit()
 
             logger.info("All workspaces deactivated")
 
-    def get_active(self) -> Optional[WorkspaceInfo]:
-        for w in self._workspaces.values():
-            if w.is_active:
-                return w
+    def get_active(self, owner_user_id: str | None = None) -> WorkspaceInfo | None:
+        for workspace_id, workspace in self._workspaces.items():
+            if workspace.is_active and (
+                owner_user_id is None or self._owners.get(workspace_id) == owner_user_id
+            ):
+                return workspace
         return None
 
     # --- File Operations (unchanged — filesystem only) ---
@@ -191,7 +239,7 @@ class WorkspaceManager:
 
     def get_file_tree(
         self, workspace_id: str, path: str = ".", max_depth: int = 3
-    ) -> List[FileTreeNode]:
+    ) -> list[FileTreeNode]:
         target = self._resolve_safe_path(workspace_id, path)
         if not target.is_dir():
             raise NotFoundError(f"Not a directory: {path}")
@@ -201,8 +249,8 @@ class WorkspaceManager:
 
     def _scan_dir(
         self, dir_path: Path, root: Path, max_depth: int, current_depth: int
-    ) -> List[FileTreeNode]:
-        nodes: List[FileTreeNode] = []
+    ) -> list[FileTreeNode]:
+        nodes: list[FileTreeNode] = []
         try:
             entries = sorted(dir_path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
         except PermissionError:
@@ -219,34 +267,38 @@ class WorkspaceManager:
                 children = None
                 if current_depth < max_depth:
                     children = self._scan_dir(entry, root, max_depth, current_depth + 1)
-                nodes.append(FileTreeNode(
-                    name=entry.name,
-                    path=rel,
-                    type="dir",
-                    children=children,
-                ))
+                nodes.append(
+                    FileTreeNode(
+                        name=entry.name,
+                        path=rel,
+                        type="dir",
+                        children=children,
+                    )
+                )
             else:
                 try:
                     size = entry.stat().st_size
                 except OSError:
                     size = 0
-                nodes.append(FileTreeNode(
-                    name=entry.name,
-                    path=rel,
-                    type="file",
-                    size=size,
-                ))
+                nodes.append(
+                    FileTreeNode(
+                        name=entry.name,
+                        path=rel,
+                        type="file",
+                        size=size,
+                    )
+                )
         return nodes
 
     def read_file(
-        self, workspace_id: str, path: str, offset: int = 0, limit: Optional[int] = None
+        self, workspace_id: str, path: str, offset: int = 0, limit: int | None = None
     ) -> FileContent:
         target = self._resolve_safe_path(workspace_id, path)
         if not target.is_file():
             raise NotFoundError(f"File not found: {path}")
 
         text = target.read_text(encoding="utf-8", errors="replace")
-        lines = text.split('\n')
+        lines = text.split("\n")
         total = len(lines)
 
         if offset > 0:
@@ -289,6 +341,7 @@ class WorkspaceManager:
 
     def delete_path(self, workspace_id: str, path: str) -> str:
         import shutil
+
         target = self._resolve_safe_path(workspace_id, path)
         if not target.exists():
             raise NotFoundError(f"Not found: {path}")
@@ -334,7 +387,7 @@ class WorkspaceManager:
 
         content = target.read_text(encoding="utf-8")
 
-        match_mode, pos, matched_len = fuzzy_find(content, req.old_string)
+        match_mode, _pos, _matched_len = fuzzy_find(content, req.old_string)
 
         if match_mode is None:
             line_count = len(content.splitlines())

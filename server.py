@@ -1,3 +1,4 @@
+import asyncio
 import html as html_lib
 import logging
 import os
@@ -7,15 +8,50 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse  # JSONResponse imported above
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+)  # JSONResponse imported above
 from fastapi.staticfiles import StaticFiles
-
-from fastapi.responses import JSONResponse
-
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-
-from open_agent.api.endpoints import auth as auth_router, chat, mcp as mcp_router, skills as skills_router, pages as pages_router, settings as settings_router, sessions as sessions_router, memory as memory_router, workspace as workspace_router, jobs as jobs_router, sandbox as sandbox_router
+from open_agent.api.endpoints import (
+    auth as auth_router,
+)
+from open_agent.api.endpoints import (
+    chat,
+)
+from open_agent.api.endpoints import (
+    jobs as jobs_router,
+)
+from open_agent.api.endpoints import (
+    mcp as mcp_router,
+)
+from open_agent.api.endpoints import (
+    memory as memory_router,
+)
+from open_agent.api.endpoints import (
+    pages as pages_router,
+)
+from open_agent.api.endpoints import (
+    runs as runs_router,
+)
+from open_agent.api.endpoints import (
+    sandbox as sandbox_router,
+)
+from open_agent.api.endpoints import (
+    sessions as sessions_router,
+)
+from open_agent.api.endpoints import (
+    settings as settings_router,
+)
+from open_agent.api.endpoints import (
+    skills as skills_router,
+)
+from open_agent.api.endpoints import (
+    workspace as workspace_router,
+)
+from open_agent.api.middleware import RequestLoggingMiddleware
 from open_agent.core.auth.rate_limit import limiter
 from open_agent.core.exceptions import (
     AlreadyExistsError,
@@ -25,23 +61,24 @@ from open_agent.core.exceptions import (
     LLMError,
     LLMRateLimitError,
     MCPConnectionError,
-    OpenAgentError,
     NotFoundError,
     NotInitializedError,
+    OpenAgentError,
     PermissionDeniedError,
     StorageLimitError,
 )
-from open_agent.core.mcp_manager import mcp_manager
-from open_agent.core.skill_manager import skill_manager
-from open_agent.core.page_manager import page_manager
-from open_agent.core.settings_manager import settings_manager
-from open_agent.core.session_manager import session_manager
-from open_agent.core.memory_manager import memory_manager
-from open_agent.core.workspace_manager import workspace_manager
 from open_agent.core.job_manager import job_manager
 from open_agent.core.job_scheduler import job_scheduler
 from open_agent.core.logging import setup_logging
-from open_agent.api.middleware import RequestLoggingMiddleware
+from open_agent.core.mcp_manager import mcp_manager
+from open_agent.core.memory_manager import memory_manager
+from open_agent.core.page_manager import page_manager
+from open_agent.core.session_manager import session_manager
+from open_agent.core.settings_manager import settings_manager
+from open_agent.core.skill_manager import skill_manager
+from open_agent.core.workspace_manager import workspace_manager
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -54,6 +91,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 async def lifespan(app: FastAPI):
     # 데이터 디렉토리 자동 초기화 (init 없이도 start만으로 동작)
     from open_agent.config import init_data_dir
+
     data_dir = init_data_dir()
     env_path = data_dir / ".env"
     if env_path.exists():
@@ -63,7 +101,15 @@ async def lifespan(app: FastAPI):
     if not os.environ.get("GITHUB_TOKEN") and not os.environ.get("GH_TOKEN"):
         try:
             import subprocess
-            token = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=5).stdout.strip()
+
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["gh", "auth", "token"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            token = result.stdout.strip()
             if token:
                 os.environ["GITHUB_TOKEN"] = token
                 logger.info("GITHUB_TOKEN auto-configured from gh CLI")
@@ -72,11 +118,13 @@ async def lifespan(app: FastAPI):
 
     # Initialize database
     from core.db.engine import init_db
+
     logger.info("Initializing database...")
     await init_db()
 
     # Migrate legacy JSON files into database (one-time, idempotent)
     from core.db.migrate import migrate_json_to_db
+
     await migrate_json_to_db(data_dir)
 
     # Startup — load from database
@@ -119,6 +167,7 @@ async def lifespan(app: FastAPI):
     await mcp_manager.disconnect_all()
     logger.info("Closing database...")
     from core.db.engine import close_db
+
     await close_db()
 
 
@@ -142,7 +191,9 @@ def _register_exception_handlers(target_app: FastAPI) -> None:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @target_app.exception_handler(PermissionDeniedError)
-    async def permission_denied_handler(request: Request, exc: PermissionDeniedError) -> JSONResponse:
+    async def permission_denied_handler(
+        request: Request, exc: PermissionDeniedError
+    ) -> JSONResponse:
         return JSONResponse(status_code=403, content={"detail": str(exc)})
 
     @target_app.exception_handler(InvalidPathError)
@@ -221,9 +272,11 @@ app.include_router(sessions_router.router, prefix="/api/sessions", tags=["sessio
 app.include_router(memory_router.router, prefix="/api/memory", tags=["memory"])
 app.include_router(workspace_router.router, prefix="/api/workspace", tags=["workspace"])
 app.include_router(jobs_router.router, prefix="/api/jobs", tags=["jobs"])
+app.include_router(runs_router.router, prefix="/api/runs", tags=["runs"])
 app.include_router(sandbox_router.router, prefix="/api/sandbox", tags=["sandbox"])
 
 # --- Host info (for --expose LAN URL) ---
+
 
 @app.get("/api/host-info")
 async def host_info():
@@ -233,6 +286,7 @@ async def host_info():
     result: dict = {"expose": expose, "port": port}
     if expose:
         import socket
+
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.connect(("8.8.8.8", 80))
@@ -244,10 +298,12 @@ async def host_info():
 
 # --- Hosted pages (public, no auth) ---
 
+
 @app.get("/hosted/")
 async def hosted_directory():
     """Public directory of all published pages."""
     from open_agent.core.page_manager import page_manager as pm
+
     published = pm.get_published_pages()
     if not published:
         html = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Hosted Pages</title>
@@ -258,13 +314,17 @@ h1{font-size:1.5em;border-bottom:2px solid #333;padding-bottom:12px}p{color:#888
 
     items = ""
     for p in published:
-        lock = ' <span style="color:#f97316;font-size:12px">&#128274;</span>' if p.host_password_hash else ""
+        lock = (
+            ' <span style="color:#f97316;font-size:12px">&#128274;</span>'
+            if p.host_password_hash
+            else ""
+        )
         href = f"/hosted/{p.id}/" if p.content_type == "bundle" else f"/hosted/{p.id}"
         items += f'<a href="{href}" style="display:block;padding:12px 16px;margin:4px 0;background:#1a1a1a;border:1px solid #333;text-decoration:none;color:#e5e5e5;border-radius:6px">'
-        items += f'<strong>{html_lib.escape(p.name)}</strong>{lock}'
+        items += f"<strong>{html_lib.escape(p.name)}</strong>{lock}"
         if p.description:
             items += f'<br><small style="color:#888">{html_lib.escape(p.description)}</small>'
-        items += '</a>'
+        items += "</a>"
 
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Hosted Pages</title>
 <style>body{{font-family:system-ui;max-width:800px;margin:40px auto;padding:20px;background:#0a0a0a;color:#e5e5e5}}
@@ -275,6 +335,7 @@ h1{{font-size:1.5em;border-bottom:2px solid #333;padding-bottom:12px}}a:hover{{b
 
 def _hosted_password_cookie_val(password_hash: str) -> str:
     import hashlib
+
     return hashlib.sha256(password_hash.encode()).hexdigest()
 
 
@@ -301,7 +362,9 @@ async def hosted_page_root(request: Request, page_id: str):
 
     page = pm.get_page(page_id)
     if not page or not page.published:
-        return HTMLResponse(content="<h1>404 — Page not found or not published</h1>", status_code=404)
+        return HTMLResponse(
+            content="<h1>404 — Page not found or not published</h1>", status_code=404
+        )
 
     # Password check via cookie
     if page.host_password_hash:
@@ -324,7 +387,9 @@ async def hosted_page_password(request: Request, page_id: str):
 
     page = pm.get_page(page_id)
     if not page or not page.published:
-        return HTMLResponse(content="<h1>404 — Page not found or not published</h1>", status_code=404)
+        return HTMLResponse(
+            content="<h1>404 — Page not found or not published</h1>", status_code=404
+        )
 
     if not page.host_password_hash:
         if page.content_type == "bundle":
@@ -342,8 +407,9 @@ async def hosted_page_password(request: Request, page_id: str):
         # For bundles: inject <base href> so relative paths (CSS/JS) resolve to /hosted/{page_id}/
         base = f"/hosted/{page_id}/" if page.content_type == "bundle" else None
         resp = await _serve_hosted_content(page, page_id, "", base_href=base)
-        resp.set_cookie(f"hosted_pw_{page_id}", cookie_val,
-                        httponly=True, samesite="lax", max_age=86400)
+        resp.set_cookie(
+            f"hosted_pw_{page_id}", cookie_val, httponly=True, samesite="lax", max_age=86400
+        )
         return resp
 
     return _hosted_password_form(page_id, wrong=True)
@@ -352,8 +418,9 @@ async def hosted_page_password(request: Request, page_id: str):
 @app.get("/hosted/{page_id}/__version__")
 async def hosted_page_version(page_id: str):
     """Return page version for live-reload polling."""
-    from open_agent.core.page_manager import page_manager as pm
     from fastapi.responses import JSONResponse
+    from open_agent.core.page_manager import page_manager as pm
+
     v = pm.get_version(page_id)
     return JSONResponse({"v": v}, headers={"Cache-Control": "no-cache, no-store"})
 
@@ -365,7 +432,9 @@ async def hosted_page_file(request: Request, page_id: str, file_path: str = ""):
 
     page = pm.get_page(page_id)
     if not page or not page.published:
-        return HTMLResponse(content="<h1>404 — Page not found or not published</h1>", status_code=404)
+        return HTMLResponse(
+            content="<h1>404 — Page not found or not published</h1>", status_code=404
+        )
 
     # Password check for entry page only (root access with no file_path)
     # Sub-resources (JS/CSS/images) are served without password — they're useless without the entry HTML
@@ -380,18 +449,25 @@ async def hosted_page_file(request: Request, page_id: str, file_path: str = ""):
 def _inject_base(html: str, href: str) -> str:
     """Inject <base href> right after <head> so relative paths resolve correctly."""
     import re
+
     base_tag = f'<base href="{href}">'
-    m = re.search(r'(<head[^>]*>)', html, re.IGNORECASE)
+    m = re.search(r"(<head[^>]*>)", html, re.IGNORECASE)
     if m:
-        return html[:m.end()] + base_tag + html[m.end():]
+        return html[: m.end()] + base_tag + html[m.end() :]
     return base_tag + html
 
 
 async def _serve_hosted_content(page, page_id: str, file_path: str, base_href: str | None = None):
     """Serve the actual file content for a hosted page."""
-    from open_agent.core.page_manager import page_manager as pm
-    from open_agent.core.page_wrapper import needs_wrapper, generate_wrapper, inject_storage_bridge, inject_live_reload
     import mimetypes as mt
+
+    from open_agent.core.page_manager import page_manager as pm
+    from open_agent.core.page_wrapper import (
+        generate_wrapper,
+        inject_live_reload,
+        inject_storage_bridge,
+        needs_wrapper,
+    )
 
     hosted_version_url = f"/hosted/{page_id}/__version__"
 
@@ -409,7 +485,9 @@ async def _serve_hosted_content(page, page_id: str, file_path: str, base_href: s
             return HTMLResponse(content="<h1>404 — File not found</h1>", status_code=404)
         is_entry = not file_path or file_path == (page.entry_file or "index.html")
         if is_entry and needs_wrapper(target_path):
-            return HTMLResponse(content=_finalize_html(generate_wrapper(page_id, target_path, resolved)))
+            return HTMLResponse(
+                content=_finalize_html(generate_wrapper(page_id, target_path, resolved))
+            )
         if is_entry:
             return HTMLResponse(content=_finalize_html(resolved.read_text(encoding="utf-8")))
         mime, _ = mt.guess_type(str(resolved))
@@ -421,7 +499,9 @@ async def _serve_hosted_content(page, page_id: str, file_path: str, base_href: s
             return HTMLResponse(content="<h1>404 — File not found</h1>", status_code=404)
         filename = page.filename or "index.html"
         if needs_wrapper(filename):
-            return HTMLResponse(content=_finalize_html(generate_wrapper(page_id, filename, html_path)))
+            return HTMLResponse(
+                content=_finalize_html(generate_wrapper(page_id, filename, html_path))
+            )
         return HTMLResponse(content=_finalize_html(html_path.read_text(encoding="utf-8")))
 
     return HTMLResponse(content="<h1>400 — Unsupported page type</h1>", status_code=400)
@@ -440,11 +520,13 @@ if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
         # API 경로는 SPA fallback에서 제외 — 라우터가 처리하도록 함
         if path.startswith("api/"):
             from fastapi.responses import JSONResponse
+
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
         # 경로 순회 방지: resolve 후 STATIC_DIR 내부인지 검증
         file_path = (STATIC_DIR / path).resolve()
         if not file_path.is_relative_to(STATIC_DIR.resolve()):
             from fastapi.responses import JSONResponse
+
             return JSONResponse(status_code=400, content={"detail": "Invalid path"})
         # 파일이 존재하면 직접 서빙
         if file_path.is_file():
@@ -459,6 +541,7 @@ if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
             return FileResponse(index)
         return {"message": "Welcome to Open Agent API"}
 else:
+
     @app.get("/")
     async def root():
         return {"message": "Welcome to Open Agent API"}

@@ -4,14 +4,10 @@ import mimetypes
 import os
 import platform
 import subprocess
-from typing import Annotated, List, Optional
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-
-from core.auth.dependencies import require_any, require_user
-
 from open_agent.core.workspace_manager import workspace_manager
 from open_agent.models.workspace import (
     CreateWorkspaceRequest,
@@ -22,6 +18,9 @@ from open_agent.models.workspace import (
     WorkspaceInfo,
     WriteFileRequest,
 )
+from pydantic import BaseModel
+
+from core.auth.dependencies import require_any, require_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -98,23 +97,37 @@ def _pick_directory(default_path: str = "") -> str | None:
                 cmd += f' default location POSIX file "{escaped}"'
             result = subprocess.run(
                 ["osascript", "-e", f"POSIX path of ({cmd})"],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if result.returncode == 0:
                 return result.stdout.strip().rstrip("/")
         elif system == "Windows":
             env = {**os.environ, "OPEN_AGENT_DEFAULT_PATH": default_path or ""}
             result = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-                 _WINDOWS_FOLDER_PICKER_PS],
-                capture_output=True, text=True, timeout=120, env=env,
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    _WINDOWS_FOLDER_PICKER_PS,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
         else:
             # Linux — zenity
-            cmd = ["zenity", "--file-selection", "--directory",
-                   "--title=Select workspace directory"]
+            cmd = [
+                "zenity",
+                "--file-selection",
+                "--directory",
+                "--title=Select workspace directory",
+            ]
             if default_path and os.path.isdir(default_path):
                 cmd.extend(["--filename", default_path.rstrip("/") + "/"])
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -130,7 +143,10 @@ class BrowseDirectoryRequest(BaseModel):
 
 
 @router.post("/browse-directory")
-async def browse_directory(current_user: Annotated[dict, Depends(require_user)], req: BrowseDirectoryRequest = BrowseDirectoryRequest()):
+async def browse_directory(
+    current_user: Annotated[dict, Depends(require_user)],
+    req: BrowseDirectoryRequest = BrowseDirectoryRequest(),
+):
     """OS 네이티브 폴더 선택 다이얼로그를 열어 경로를 반환한다."""
     path = await asyncio.to_thread(_pick_directory, req.default_path)
     if path is None:
@@ -140,25 +156,41 @@ async def browse_directory(current_user: Annotated[dict, Depends(require_user)],
 
 @router.get("/", response_model=list[WorkspaceInfo])
 async def list_workspaces(current_user: Annotated[dict, Depends(require_any)]):
-    return workspace_manager.get_all()
+    return workspace_manager.get_all(owner_user_id=current_user["id"])
 
 
 @router.post("/", response_model=WorkspaceInfo)
-async def create_workspace(req: CreateWorkspaceRequest, current_user: Annotated[dict, Depends(require_user)]):
-    return await workspace_manager.create_workspace(req.name, req.path, req.description)
+async def create_workspace(
+    req: CreateWorkspaceRequest, current_user: Annotated[dict, Depends(require_user)]
+):
+    return await workspace_manager.create_workspace(
+        req.name,
+        req.path,
+        req.description,
+        owner_user_id=current_user["id"],
+    )
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceInfo)
 async def get_workspace(workspace_id: str, current_user: Annotated[dict, Depends(require_any)]):
-    ws = workspace_manager.get_workspace(workspace_id)
+    ws = workspace_manager.get_workspace(workspace_id, owner_user_id=current_user["id"])
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
     return ws
 
 
 @router.patch("/{workspace_id}", response_model=WorkspaceInfo)
-async def update_workspace(workspace_id: str, req: UpdateWorkspaceRequest, current_user: Annotated[dict, Depends(require_user)]):
-    ws = await workspace_manager.update_workspace(workspace_id, name=req.name, description=req.description)
+async def update_workspace(
+    workspace_id: str,
+    req: UpdateWorkspaceRequest,
+    current_user: Annotated[dict, Depends(require_user)],
+):
+    ws = await workspace_manager.update_workspace(
+        workspace_id,
+        name=req.name,
+        description=req.description,
+        owner_user_id=current_user["id"],
+    )
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
     return ws
@@ -166,14 +198,16 @@ async def update_workspace(workspace_id: str, req: UpdateWorkspaceRequest, curre
 
 @router.delete("/{workspace_id}")
 async def delete_workspace(workspace_id: str, current_user: Annotated[dict, Depends(require_user)]):
-    if not await workspace_manager.delete_workspace(workspace_id):
+    if not await workspace_manager.delete_workspace(workspace_id, owner_user_id=current_user["id"]):
         raise HTTPException(status_code=404, detail="Workspace not found")
     return {"status": "deleted"}
 
 
 @router.post("/{workspace_id}/activate", response_model=WorkspaceInfo)
-async def activate_workspace(workspace_id: str, current_user: Annotated[dict, Depends(require_user)]):
-    ws = await workspace_manager.set_active(workspace_id)
+async def activate_workspace(
+    workspace_id: str, current_user: Annotated[dict, Depends(require_user)]
+):
+    ws = await workspace_manager.set_active(workspace_id, owner_user_id=current_user["id"])
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
     return ws
@@ -181,7 +215,7 @@ async def activate_workspace(workspace_id: str, current_user: Annotated[dict, De
 
 @router.post("/deactivate")
 async def deactivate_workspace(current_user: Annotated[dict, Depends(require_user)]):
-    await workspace_manager.deactivate()
+    await workspace_manager.deactivate(owner_user_id=current_user["id"])
     return {"status": "deactivated"}
 
 
@@ -201,22 +235,34 @@ async def read_file(
     current_user: Annotated[dict, Depends(require_any)],
     path: str,
     offset: int = 0,
-    limit: Optional[int] = None,
+    limit: int | None = None,
 ):
     return workspace_manager.read_file(workspace_id, path, offset, limit)
 
 
 # 개발 파일 확장자 MIME 오버라이드 (.ts → video/mp2t 방지 등)
 _MIME_OVERRIDES = {
-    ".ts": "text/plain", ".tsx": "text/plain", ".jsx": "text/plain",
-    ".md": "text/markdown", ".yml": "text/yaml", ".yaml": "text/yaml",
-    ".toml": "text/plain", ".rs": "text/plain", ".go": "text/plain",
-    ".vue": "text/plain", ".svelte": "text/plain",
+    ".ts": "text/plain",
+    ".tsx": "text/plain",
+    ".jsx": "text/plain",
+    ".md": "text/markdown",
+    ".yml": "text/yaml",
+    ".yaml": "text/yaml",
+    ".toml": "text/plain",
+    ".rs": "text/plain",
+    ".go": "text/plain",
+    ".vue": "text/plain",
+    ".svelte": "text/plain",
 }
 
 
 @router.get("/{workspace_id}/raw")
-async def get_raw_file(workspace_id: str, path: str, current_user: Annotated[dict, Depends(require_any)], download: bool = False):
+async def get_raw_file(
+    workspace_id: str,
+    path: str,
+    current_user: Annotated[dict, Depends(require_any)],
+    download: bool = False,
+):
     file_path = workspace_manager.get_raw_file_path(workspace_id, path)
 
     ext = file_path.suffix.lower()
@@ -237,8 +283,8 @@ async def get_raw_file(workspace_id: str, path: str, current_user: Annotated[dic
 async def upload_files(
     workspace_id: str,
     current_user: Annotated[dict, Depends(require_user)],
-    files: List[UploadFile] = File(...),
-    path: str = Form(default="."),
+    files: Annotated[list[UploadFile], File(...)],
+    path: Annotated[str, Form()] = ".",
 ):
     results = []
     for file in files:
@@ -264,31 +310,41 @@ class DeleteFileRequest(BaseModel):
 
 
 @router.post("/{workspace_id}/rename")
-async def rename_file(workspace_id: str, req: RenameRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def rename_file(
+    workspace_id: str, req: RenameRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     result = workspace_manager.rename_file(workspace_id, req.old_path, req.new_path)
     return {"status": "ok", "message": result}
 
 
 @router.post("/{workspace_id}/mkdir")
-async def mkdir(workspace_id: str, req: MkdirRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def mkdir(
+    workspace_id: str, req: MkdirRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     result = workspace_manager.mkdir(workspace_id, req.path)
     return {"status": "ok", "message": result}
 
 
 @router.post("/{workspace_id}/delete")
-async def delete_file(workspace_id: str, req: DeleteFileRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def delete_file(
+    workspace_id: str, req: DeleteFileRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     result = workspace_manager.delete_path(workspace_id, req.path)
     return {"status": "ok", "message": result}
 
 
 @router.post("/{workspace_id}/file")
-async def write_file(workspace_id: str, req: WriteFileRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def write_file(
+    workspace_id: str, req: WriteFileRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     result = workspace_manager.write_file(workspace_id, req.path, req.content)
     return {"status": "ok", "message": result}
 
 
 @router.post("/{workspace_id}/edit")
-async def edit_file(workspace_id: str, req: EditFileRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def edit_file(
+    workspace_id: str, req: EditFileRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     try:
         result = workspace_manager.edit_file(workspace_id, req)
         return {"status": "ok", "message": result}

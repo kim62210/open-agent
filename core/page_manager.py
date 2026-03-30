@@ -9,12 +9,12 @@ import time
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from open_agent.core.exceptions import NotFoundError, NotInitializedError, StorageLimitError
 from open_agent.models.page import PageInfo
 
 logger = logging.getLogger(__name__)
+
 
 def _check_frameable(url: str) -> bool:
     """Check if a URL allows being framed by inspecting response headers."""
@@ -45,10 +45,11 @@ def _check_frameable(url: str) -> bool:
 class PageManager:
     def __init__(self):
         self._lock = asyncio.Lock()
-        self._pages: Dict[str, PageInfo] = {}
-        self._pages_dir: Optional[Path] = None
-        self._active_page_id: Optional[str] = None
-        self._versions: Dict[str, int] = {}  # page_id -> version (ms timestamp)
+        self._pages: dict[str, PageInfo] = {}
+        self._owners: dict[str, str | None] = {}
+        self._pages_dir: Path | None = None
+        self._active_page_id: str | None = None
+        self._versions: dict[str, int] = {}  # page_id -> version (ms timestamp)
 
     def bump_version(self, page_id: str) -> None:
         """Increment page version — triggers live-reload for viewers."""
@@ -63,6 +64,7 @@ class PageManager:
         pages_path = Path(pages_dir)
         if not pages_path.is_absolute():
             from open_agent.config import get_pages_dir
+
             pages_path = get_pages_dir()
         self._pages_dir = pages_path
         self._pages_dir.mkdir(parents=True, exist_ok=True)
@@ -77,6 +79,7 @@ class PageManager:
                 repo = PageRepository(session)
                 rows = await repo.get_all()
                 self._pages.clear()
+                self._owners.clear()
                 for row in rows:
                     # Recompute size from filesystem
                     size = 0
@@ -101,6 +104,7 @@ class PageManager:
                         published=row.published,
                         host_password_hash=row.host_password_hash,
                     )
+                    self._owners[row.id] = row.owner_user_id
                 logger.info(f"Loaded {len(self._pages)} pages from database")
 
     async def _persist_page(self, page: PageInfo) -> None:
@@ -111,6 +115,7 @@ class PageManager:
         async with async_session_factory() as session:
             orm = PageORM(
                 id=page.id,
+                owner_user_id=self._owners.get(page.id),
                 name=page.name,
                 description=page.description,
                 content_type=page.content_type,
@@ -138,7 +143,13 @@ class PageManager:
 
     # --- Folder operations ---
 
-    async def create_folder(self, name: str, description: str = "", parent_id: Optional[str] = None) -> PageInfo:
+    async def create_folder(
+        self,
+        name: str,
+        description: str = "",
+        parent_id: str | None = None,
+        owner_user_id: str | None = None,
+    ) -> PageInfo:
         async with self._lock:
             folder_id = uuid.uuid4().hex[:8]
             folder = PageInfo(
@@ -149,16 +160,24 @@ class PageManager:
                 parent_id=parent_id,
             )
             self._pages[folder_id] = folder
+            self._owners[folder_id] = owner_user_id
             await self._persist_page(folder)
             logger.info(f"Created folder: {name}")
             return folder
 
-    def get_children(self, parent_id: Optional[str] = None) -> List[PageInfo]:
-        return [p for p in self._pages.values() if p.parent_id == parent_id]
+    def get_children(
+        self, parent_id: str | None = None, owner_user_id: str | None = None
+    ) -> list[PageInfo]:
+        return [
+            page
+            for page_id, page in self._pages.items()
+            if page.parent_id == parent_id
+            and (owner_user_id is None or self._owners.get(page_id) == owner_user_id)
+        ]
 
-    def get_breadcrumb(self, page_id: Optional[str]) -> List[PageInfo]:
+    def get_breadcrumb(self, page_id: str | None) -> list[PageInfo]:
         """Return list from root to page_id (inclusive)."""
-        crumbs: List[PageInfo] = []
+        crumbs: list[PageInfo] = []
         current_id = page_id
         visited = set()
         while current_id and current_id not in visited:
@@ -173,13 +192,19 @@ class PageManager:
 
     # --- Page CRUD ---
 
-    def get_all(self) -> List[PageInfo]:
-        return list(self._pages.values())
+    def get_all(self, owner_user_id: str | None = None) -> list[PageInfo]:
+        return [
+            page
+            for page_id, page in self._pages.items()
+            if owner_user_id is None or self._owners.get(page_id) == owner_user_id
+        ]
 
-    def get_page(self, page_id: str) -> Optional[PageInfo]:
+    def get_page(self, page_id: str, owner_user_id: str | None = None) -> PageInfo | None:
+        if owner_user_id is not None and self._owners.get(page_id) != owner_user_id:
+            return None
         return self._pages.get(page_id)
 
-    def get_page_dir(self, page_id: str) -> Optional[Path]:
+    def get_page_dir(self, page_id: str) -> Path | None:
         """Return the filesystem directory for a bundle page, or None."""
         page = self._pages.get(page_id)
         if not page or not self._pages_dir:
@@ -189,7 +214,7 @@ class PageManager:
             return d if d.is_dir() else None
         return None
 
-    def get_html_path(self, page_id: str) -> Optional[Path]:
+    def get_html_path(self, page_id: str) -> Path | None:
         page = self._pages.get(page_id)
         if not page or not self._pages_dir:
             return None
@@ -201,7 +226,14 @@ class PageManager:
         p = self._pages_dir / page.filename
         return p if p.exists() else None
 
-    async def _add_page_unlocked(self, name: str, description: str, html_bytes: bytes, original_filename: str, parent_id: Optional[str] = None) -> PageInfo:
+    async def _add_page_unlocked(
+        self,
+        name: str,
+        description: str,
+        html_bytes: bytes,
+        original_filename: str,
+        parent_id: str | None = None,
+    ) -> PageInfo:
         """Internal add_page without acquiring lock (caller must hold self._lock)."""
         if not self._pages_dir:
             raise NotInitializedError("PageManager not initialized")
@@ -227,23 +259,43 @@ class PageManager:
         logger.info(f"Added page: {name} ({safe_filename})")
         return page
 
-    async def add_page(self, name: str, description: str, html_bytes: bytes, original_filename: str, parent_id: Optional[str] = None) -> PageInfo:
+    async def add_page(
+        self,
+        name: str,
+        description: str,
+        html_bytes: bytes,
+        original_filename: str,
+        parent_id: str | None = None,
+    ) -> PageInfo:
         async with self._lock:
-            return await self._add_page_unlocked(name, description, html_bytes, original_filename, parent_id=parent_id)
+            return await self._add_page_unlocked(
+                name, description, html_bytes, original_filename, parent_id=parent_id
+            )
 
-    async def add_page_from_path(self, name: str, description: str, source_path: str, parent_id: Optional[str] = None) -> PageInfo:
+    async def add_page_from_path(
+        self, name: str, description: str, source_path: str, parent_id: str | None = None
+    ) -> PageInfo:
         async with self._lock:
             if not self._pages_dir:
                 raise NotInitializedError("PageManager not initialized")
 
-            src = Path(source_path).resolve()
+            src = await asyncio.to_thread(lambda: Path(source_path).resolve())
             if not src.is_file():
                 raise NotFoundError(f"File not found: {source_path}")
 
             html_bytes = src.read_bytes()
-            return await self._add_page_unlocked(name, description, html_bytes, src.name, parent_id=parent_id)
+            return await self._add_page_unlocked(
+                name, description, html_bytes, src.name, parent_id=parent_id
+            )
 
-    async def add_bookmark(self, name: str, url: str, description: str = "", parent_id: Optional[str] = None) -> PageInfo:
+    async def add_bookmark(
+        self,
+        name: str,
+        url: str,
+        description: str = "",
+        parent_id: str | None = None,
+        owner_user_id: str | None = None,
+    ) -> PageInfo:
         async with self._lock:
             page_id = uuid.uuid4().hex[:8]
             frameable = _check_frameable(url)
@@ -257,6 +309,7 @@ class PageManager:
                 frameable=frameable,
             )
             self._pages[page_id] = page
+            self._owners[page_id] = owner_user_id
             await self._persist_page(page)
             logger.info(f"Added bookmark: {name} ({url}) frameable={frameable}")
             return page
@@ -270,12 +323,16 @@ class PageManager:
         return 0
 
     @staticmethod
-    def _detect_entry_file(bundle_dir: Path) -> Optional[str]:
+    def _detect_entry_file(bundle_dir: Path) -> str | None:
         # Priority: index.html > index.htm > first .html at root > first .html nested
         for name in ("index.html", "index.htm"):
             if (bundle_dir / name).exists():
                 return name
-        root_htmls = sorted(f.name for f in bundle_dir.iterdir() if f.is_file() and f.suffix.lower() in (".html", ".htm"))
+        root_htmls = sorted(
+            f.name
+            for f in bundle_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in (".html", ".htm")
+        )
         if root_htmls:
             return root_htmls[0]
         nested_htmls = sorted(str(f.relative_to(bundle_dir)) for f in bundle_dir.rglob("*.html"))
@@ -288,9 +345,9 @@ class PageManager:
         self,
         name: str,
         description: str,
-        files: List[Tuple[str, bytes]],
-        entry_file: Optional[str] = None,
-        parent_id: Optional[str] = None,
+        files: list[tuple[str, bytes]],
+        entry_file: str | None = None,
+        parent_id: str | None = None,
     ) -> PageInfo:
         async with self._lock:
             if not self._pages_dir:
@@ -329,7 +386,7 @@ class PageManager:
             logger.info(f"Added bundle: {name} ({page_id}/, entry={entry_file})")
             return page
 
-    def get_bundle_file_path(self, page_id: str, file_path: str) -> Optional[Path]:
+    def get_bundle_file_path(self, page_id: str, file_path: str) -> Path | None:
         page = self._pages.get(page_id)
         if not page or page.content_type != "bundle" or not self._pages_dir:
             return None
@@ -339,7 +396,7 @@ class PageManager:
             return None
         return target if target.is_file() else None
 
-    async def check_and_update_frameable(self, page_id: str) -> Optional[bool]:
+    async def check_and_update_frameable(self, page_id: str) -> bool | None:
         async with self._lock:
             page = self._pages.get(page_id)
             if not page or page.content_type != "url" or not page.url:
@@ -350,7 +407,13 @@ class PageManager:
             await self._persist_page(page)
             return frameable
 
-    async def update_page(self, page_id: str, name: Optional[str] = None, description: Optional[str] = None, parent_id: Optional[str] = "__unset__") -> Optional[PageInfo]:
+    async def update_page(
+        self,
+        page_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        parent_id: str | None = "__unset__",
+    ) -> PageInfo | None:
         async with self._lock:
             page = self._pages.get(page_id)
             if not page:
@@ -402,10 +465,9 @@ class PageManager:
         async with self._lock:
             return await self._delete_page_unlocked(page_id)
 
-
     # --- Active page ---
 
-    def activate_page(self, page_id: str) -> Optional[PageInfo]:
+    def activate_page(self, page_id: str) -> PageInfo | None:
         page = self._pages.get(page_id)
         if not page or page.content_type == "folder":
             return None
@@ -416,7 +478,7 @@ class PageManager:
     def deactivate_page(self) -> None:
         self._active_page_id = None
 
-    def get_active_page(self) -> Optional[PageInfo]:
+    def get_active_page(self) -> PageInfo | None:
         if not self._active_page_id:
             return None
         page = self._pages.get(self._active_page_id)
@@ -435,7 +497,9 @@ class PageManager:
         dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations=100_000)
         return salt.hex() + ":" + dk.hex()
 
-    async def publish_page(self, page_id: str, published: bool, password: Optional[str] = None) -> Optional[PageInfo]:
+    async def publish_page(
+        self, page_id: str, published: bool, password: str | None = None
+    ) -> PageInfo | None:
         async with self._lock:
             page = self._pages.get(page_id)
             if not page or page.content_type in ("folder", "url"):
@@ -464,12 +528,16 @@ class PageManager:
         # 레거시 SHA-256 해시 호환
         return hashlib.sha256(password.encode("utf-8")).hexdigest() == stored
 
-    def get_published_pages(self) -> List[PageInfo]:
-        return [p for p in self._pages.values() if p.published and p.content_type not in ("folder", "url")]
+    def get_published_pages(self) -> list[PageInfo]:
+        return [
+            p
+            for p in self._pages.values()
+            if p.published and p.content_type not in ("folder", "url")
+        ]
 
     # --- Page file operations (for LLM tools) ---
 
-    def _resolve_page_file(self, page_id: str, file_path: str) -> Optional[Path]:
+    def _resolve_page_file(self, page_id: str, file_path: str) -> Path | None:
         """Resolve a file path within a page, with path traversal protection."""
         page = self._pages.get(page_id)
         if not page or not self._pages_dir:
@@ -487,7 +555,7 @@ class PageManager:
                 return (self._pages_dir / page.filename).resolve()
         return None
 
-    def list_page_files(self, page_id: str) -> Optional[List[str]]:
+    def list_page_files(self, page_id: str) -> list[str] | None:
         """List files in a page."""
         page = self._pages.get(page_id)
         if not page or not self._pages_dir:
@@ -498,22 +566,20 @@ class PageManager:
             if not bundle_dir.is_dir():
                 return []
             return sorted(
-                str(f.relative_to(bundle_dir))
-                for f in bundle_dir.rglob("*")
-                if f.is_file()
+                str(f.relative_to(bundle_dir)) for f in bundle_dir.rglob("*") if f.is_file()
             )
         elif page.content_type == "html" and page.filename:
             return [page.filename]
         return []
 
-    def read_page_file(self, page_id: str, file_path: str) -> Optional[str]:
+    def read_page_file(self, page_id: str, file_path: str) -> str | None:
         """Read a file from a page."""
         target = self._resolve_page_file(page_id, file_path)
         if not target or not target.is_file():
             return None
         return target.read_text(encoding="utf-8")
 
-    async def write_page_file(self, page_id: str, file_path: str, content: str) -> Optional[str]:
+    async def write_page_file(self, page_id: str, file_path: str, content: str) -> str | None:
         """Write/create a file in a page. Returns the resolved path or None."""
         async with self._lock:
             page = self._pages.get(page_id)
@@ -542,7 +608,7 @@ class PageManager:
                 return str(target)
             return None
 
-    async def convert_to_bundle(self, page_id: str) -> Optional[PageInfo]:
+    async def convert_to_bundle(self, page_id: str) -> PageInfo | None:
         """Convert a single-file page to a bundle for multi-file editing."""
         async with self._lock:
             page = self._pages.get(page_id)
@@ -556,7 +622,9 @@ class PageManager:
             bundle_dir = self._pages_dir / page_id
             bundle_dir.mkdir(parents=True, exist_ok=True)
 
-            original_name = Path(page.filename).stem.split("_")[-1] if "_" in page.filename else page.filename
+            original_name = (
+                Path(page.filename).stem.split("_")[-1] if "_" in page.filename else page.filename
+            )
             ext = Path(page.filename).suffix
             dest_name = f"index{ext}" if ext in (".html", ".htm") else original_name
             dest = bundle_dir / dest_name
@@ -572,12 +640,12 @@ class PageManager:
             logger.info(f"Converted page '{page.name}' to bundle")
             return page
 
-
     # --- KV Storage ---
 
     @staticmethod
     def _get_kv_path(page_id: str) -> Path:
         from open_agent.config import get_page_kv_dir
+
         return get_page_kv_dir() / f"{page_id}.json"
 
     @staticmethod
@@ -590,13 +658,13 @@ class PageManager:
     def _save_kv(path: Path, data: dict) -> None:
         path.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    def kv_list(self, page_id: str) -> Optional[List[str]]:
+    def kv_list(self, page_id: str) -> list[str] | None:
         if page_id not in self._pages:
             return None
         data = self._load_kv(self._get_kv_path(page_id))
         return list(data.keys())
 
-    def kv_get(self, page_id: str, key: str) -> Optional[str]:
+    def kv_get(self, page_id: str, key: str) -> str | None:
         if page_id not in self._pages:
             return None
         data = self._load_kv(self._get_kv_path(page_id))

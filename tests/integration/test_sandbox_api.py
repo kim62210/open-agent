@@ -10,17 +10,49 @@ from httpx import AsyncClient
 async def sandbox_client(_patch_db_factory, monkeypatch):
     """httpx.AsyncClient wired to sandbox router with mocked sandbox_manager."""
     import httpx
-    from httpx import ASGITransport
-
     from fastapi import FastAPI
-    from core.auth.dependencies import get_current_user
+    from httpx import ASGITransport
     from open_agent.api.endpoints import sandbox as sandbox_router
+
+    from core.auth.dependencies import get_current_user
 
     test_app = FastAPI()
     test_app.include_router(sandbox_router.router, prefix="/api/sandbox")
 
     async def _fake_current_user() -> dict:
-        return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "admin"}
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "testuser",
+            "role": "admin",
+        }
+
+    test_app.dependency_overrides[get_current_user] = _fake_current_user
+
+    transport = ASGITransport(app=test_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+
+@pytest.fixture()
+async def non_admin_sandbox_client(_patch_db_factory):
+    import httpx
+    from fastapi import FastAPI
+    from httpx import ASGITransport
+    from open_agent.api.endpoints import sandbox as sandbox_router
+
+    from core.auth.dependencies import get_current_user
+
+    test_app = FastAPI()
+    test_app.include_router(sandbox_router.router, prefix="/api/sandbox")
+
+    async def _fake_current_user() -> dict:
+        return {
+            "id": "test-user-id",
+            "email": "user@example.com",
+            "username": "regularuser",
+            "role": "user",
+        }
 
     test_app.dependency_overrides[get_current_user] = _fake_current_user
 
@@ -102,11 +134,13 @@ class TestEscalation:
             with patch("open_agent.api.endpoints.sandbox.SandboxPolicy") as mock_policy_cls:
                 mock_policy_cls.return_value = MagicMock()
                 mock_sm.approve_escalation = MagicMock()
-                mock_sm.execute = AsyncMock(return_value={
-                    "stdout": "hello world",
-                    "stderr": "",
-                    "exit_code": 0,
-                })
+                mock_sm.execute = AsyncMock(
+                    return_value={
+                        "stdout": "hello world",
+                        "stderr": "",
+                        "exit_code": 0,
+                    }
+                )
                 resp = await sandbox_client.post(
                     "/api/sandbox/escalate",
                     json={
@@ -147,12 +181,13 @@ class TestEscalation:
 
     async def test_approve_escalation_invalid_policy(self, sandbox_client: AsyncClient):
         """Returns not-approved for invalid policy string."""
-        with patch("open_agent.api.endpoints.sandbox.sandbox_manager") as mock_sm:
-            with patch("open_agent.api.endpoints.sandbox.SandboxPolicy", side_effect=ValueError("Invalid")):
-                resp = await sandbox_client.post(
-                    "/api/sandbox/escalate",
-                    json={"approved": True, "policy": "bad_policy"},
-                )
+        with patch(
+            "open_agent.api.endpoints.sandbox.SandboxPolicy", side_effect=ValueError("Invalid")
+        ):
+            resp = await sandbox_client.post(
+                "/api/sandbox/escalate",
+                json={"approved": True, "policy": "bad_policy"},
+            )
         assert resp.status_code == 200
         data = resp.json()
         assert data["approved"] is False
@@ -164,11 +199,13 @@ class TestEscalation:
             with patch("open_agent.api.endpoints.sandbox.SandboxPolicy") as mock_policy_cls:
                 mock_policy_cls.return_value = MagicMock()
                 mock_sm.approve_escalation = MagicMock()
-                mock_sm.execute = AsyncMock(return_value={
-                    "stdout": "x" * 40000,
-                    "stderr": "e" * 10000,
-                    "exit_code": 0,
-                })
+                mock_sm.execute = AsyncMock(
+                    return_value={
+                        "stdout": "x" * 40000,
+                        "stderr": "e" * 10000,
+                        "exit_code": 0,
+                    }
+                )
                 resp = await sandbox_client.post(
                     "/api/sandbox/escalate",
                     json={
@@ -188,11 +225,13 @@ class TestEscalation:
             with patch("open_agent.api.endpoints.sandbox.SandboxPolicy") as mock_policy_cls:
                 mock_policy_cls.return_value = MagicMock()
                 mock_sm.approve_escalation = MagicMock()
-                mock_sm.execute = AsyncMock(return_value={
-                    "stdout": "",
-                    "stderr": "",
-                    "exit_code": 0,
-                })
+                mock_sm.execute = AsyncMock(
+                    return_value={
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": 0,
+                    }
+                )
                 resp = await sandbox_client.post(
                     "/api/sandbox/escalate",
                     json={
@@ -217,3 +256,7 @@ class TestResetPolicy:
             resp = await sandbox_client.post("/api/sandbox/reset")
         assert resp.status_code == 200
         assert "reset" in resp.json()["message"].lower()
+
+    async def test_non_admin_cannot_reset_policy(self, non_admin_sandbox_client: AsyncClient):
+        resp = await non_admin_sandbox_client.post("/api/sandbox/reset")
+        assert resp.status_code == 403

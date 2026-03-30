@@ -16,7 +16,9 @@ class LLMSettings(BaseModel):
     max_tool_rounds: int = 25
     system_prompt: str = ""
     deferred_tool_loading: bool = False  # True: find_tools로 도구 동적 로드
-    deferred_tool_threshold: int = 20  # 전체 도구 수가 이 값을 초과하면 자동으로 deferred 모드 활성화 (0=비활성)
+    deferred_tool_threshold: int = (
+        20  # 전체 도구 수가 이 값을 초과하면 자동으로 deferred 모드 활성화 (0=비활성)
+    )
     system_prompt_budget: int = 0  # 시스템 프롬프트 최대 글자수 (0=무제한)
     context_window: int = 0  # 모델 컨텍스트 윈도우 (토큰, 0=LiteLLM 자동 감지)
     compact_threshold: float = 0.7  # 컨텍스트 사용률이 이 비율 초과 시 압축 트리거
@@ -50,12 +52,20 @@ class ThemeSettings(BaseModel):
     font_scale: float = 1.0
 
 
+class ApprovalSettings(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
+    risk_based_approval: bool = True
+    allowed_mcp_servers: list[str] = Field(default_factory=list)
+    allowed_tool_names: list[str] = Field(default_factory=list)
+
+
 class CustomModel(BaseModel):
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
-    label: str       # 표시명
-    model: str       # LiteLLM 모델 ID
-    provider: str    # 프로바이더 그룹 키
+    label: str  # 표시명
+    model: str  # LiteLLM 모델 ID
+    provider: str  # 프로바이더 그룹 키
 
 
 class AppSettings(BaseModel):
@@ -65,6 +75,7 @@ class AppSettings(BaseModel):
     memory: MemorySettings = MemorySettings()
     profile: ProfileSettings = ProfileSettings()
     theme: ThemeSettings = ThemeSettings()
+    approval: ApprovalSettings = ApprovalSettings()
     custom_models: list[CustomModel] = Field(default_factory=list)
 
 

@@ -3,8 +3,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from datetime import UTC, datetime
 
 from open_agent.core.llm import llm_client
 from open_agent.models.memory import MemoryCategory, MemoryItem, MemorySource
@@ -85,9 +84,10 @@ SESSION_SUMMARY_PROMPT = """You are a session summary assistant. Summarize the f
 
 class MemoryManager:
     def __init__(self):
-        self._memories: Dict[str, MemoryItem] = {}
+        self._memories: dict[str, MemoryItem] = {}
+        self._owners: dict[str, str | None] = {}
         self._compression_lock = asyncio.Lock()
-        self._last_compressed_at: Optional[float] = None
+        self._last_compressed_at: float | None = None
 
     async def load_from_db(self) -> None:
         """Load all memories from database into in-memory cache."""
@@ -98,6 +98,7 @@ class MemoryManager:
             repo = MemoryRepository(session)
             rows = await repo.get_all()
             self._memories.clear()
+            self._owners.clear()
             for row in rows:
                 self._memories[row.id] = MemoryItem(
                     id=row.id,
@@ -109,6 +110,7 @@ class MemoryManager:
                     created_at=row.created_at,
                     updated_at=row.updated_at,
                 )
+                self._owners[row.id] = row.owner_user_id
             logger.info(f"Loaded {len(self._memories)} memories from database")
 
     async def _persist_memory(self, mem: MemoryItem) -> None:
@@ -121,6 +123,7 @@ class MemoryManager:
             repo = MemoryRepository(session)
             orm = MemoryORM(
                 id=mem.id,
+                owner_user_id=self._owners.get(mem.id),
                 content=mem.content,
                 category=mem.category,
                 confidence=mem.confidence,
@@ -145,10 +148,17 @@ class MemoryManager:
 
     # --- CRUD ---
 
-    def get_all(self) -> List[MemoryItem]:
-        return sorted(self._memories.values(), key=lambda m: m.created_at, reverse=True)
+    def get_all(self, owner_user_id: str | None = None) -> list[MemoryItem]:
+        memories = [
+            memory
+            for memory_id, memory in self._memories.items()
+            if owner_user_id is None or self._owners.get(memory_id) == owner_user_id
+        ]
+        return sorted(memories, key=lambda m: m.created_at, reverse=True)
 
-    def get(self, memory_id: str) -> Optional[MemoryItem]:
+    def get(self, memory_id: str, owner_user_id: str | None = None) -> MemoryItem | None:
+        if owner_user_id is not None and self._owners.get(memory_id) != owner_user_id:
+            return None
         return self._memories.get(memory_id)
 
     async def create(
@@ -157,8 +167,9 @@ class MemoryManager:
         category: MemoryCategory = "fact",
         confidence: float = 0.7,
         source: MemorySource = "llm_inference",
+        owner_user_id: str | None = None,
     ) -> MemoryItem:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         mem = MemoryItem(
             id=uuid.uuid4().hex[:16],
             content=content,
@@ -169,42 +180,55 @@ class MemoryManager:
             updated_at=now,
         )
         self._memories[mem.id] = mem
+        self._owners[mem.id] = owner_user_id
         await self._persist_memory(mem)
         logger.info(f"Created memory [{category}]: {content[:50]}")
         return mem
 
-    async def update(self, memory_id: str, **kwargs) -> Optional[MemoryItem]:
+    async def update(
+        self, memory_id: str, owner_user_id: str | None = None, **kwargs
+    ) -> MemoryItem | None:
         mem = self._memories.get(memory_id)
         if not mem:
+            return None
+        if owner_user_id is not None and self._owners.get(memory_id) != owner_user_id:
             return None
         data = mem.model_dump()
         for k, v in kwargs.items():
             if v is not None:
                 data[k] = v
-        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        data["updated_at"] = datetime.now(UTC).isoformat()
         self._memories[memory_id] = MemoryItem(**data)
         await self._persist_memory(self._memories[memory_id])
         return self._memories[memory_id]
 
-    async def delete(self, memory_id: str) -> bool:
+    async def delete(self, memory_id: str, owner_user_id: str | None = None) -> bool:
         if memory_id not in self._memories:
             return False
+        if owner_user_id is not None and self._owners.get(memory_id) != owner_user_id:
+            return False
         self._memories.pop(memory_id)
+        self._owners.pop(memory_id, None)
         await self._delete_from_db(memory_id)
         logger.info(f"Deleted memory: {memory_id}")
         return True
 
-    async def clear_all(self) -> int:
+    async def clear_all(self, owner_user_id: str | None = None) -> int:
         from core.db.engine import async_session_factory
         from core.db.repositories.memory_repo import MemoryRepository
 
-        unpinned_ids = [mid for mid, m in self._memories.items() if not m.is_pinned]
+        unpinned_ids = [
+            mid
+            for mid, m in self._memories.items()
+            if not m.is_pinned and (owner_user_id is None or self._owners.get(mid) == owner_user_id)
+        ]
         for mid in unpinned_ids:
             del self._memories[mid]
+            self._owners.pop(mid, None)
 
         async with async_session_factory() as session:
             repo = MemoryRepository(session)
-            await repo.clear_non_pinned()
+            await repo.clear_non_pinned(owner_user_id=owner_user_id)
             await session.commit()
 
         logger.info(f"Cleared {len(unpinned_ids)} memories (pinned preserved)")
@@ -212,10 +236,10 @@ class MemoryManager:
 
     # --- Relevance Scoring ---
 
-    def _score_memories(self, user_input: str) -> List[tuple]:
+    def _score_memories(self, user_input: str) -> list[tuple]:
         """Score memories by relevance to user input."""
         input_words = {w.lower() for w in user_input.split() if len(w) >= 2}
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         results = []
 
         for mem in self._memories.values():
@@ -282,10 +306,10 @@ class MemoryManager:
 
     # --- L2: Session Summaries ---
 
-    async def _load_summaries(self) -> List[Dict]:
-        from core.db.engine import async_session_factory
-        from core.db.repositories.memory_repo import MemoryRepository
+    async def _load_summaries(self) -> list[dict]:
         from sqlalchemy import select
+
+        from core.db.engine import async_session_factory
         from core.db.models.memory import SessionSummaryORM
 
         async with async_session_factory() as session:
@@ -313,16 +337,15 @@ class MemoryManager:
             orm = SessionSummaryORM(
                 session_id=session_id,
                 summary=summary,
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
             )
             await repo.save_summary(orm)
             await session.commit()
 
     async def generate_session_summary(
-        self, session_id: str, session_title: str, messages: List[Dict]
-    ) -> Optional[str]:
+        self, session_id: str, session_title: str, messages: list[dict]
+    ) -> str | None:
         """Generate and save a session summary (L2 layer)."""
-        from open_agent.core.settings_manager import settings_manager
 
         user_msgs = [m for m in messages if m.get("role") == "user"]
         if len(user_msgs) < 2:
@@ -404,9 +427,11 @@ class MemoryManager:
 
     # --- Decay & Contradiction ---
 
-    async def apply_decay(self, decay_days: int = 60, decay_amount: float = 0.05, prune_threshold: float = 0.3) -> int:
+    async def apply_decay(
+        self, decay_days: int = 60, decay_amount: float = 0.05, prune_threshold: float = 0.3
+    ) -> int:
         """Decay old memories and prune below threshold."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         pruned = 0
         decayed = 0
         to_delete = []
@@ -437,7 +462,6 @@ class MemoryManager:
         if pruned > 0 or decayed > 0:
             # Batch persist changes to DB
             from core.db.engine import async_session_factory
-            from core.db.models.memory import MemoryORM
             from core.db.repositories.memory_repo import MemoryRepository
 
             async with async_session_factory() as session:
@@ -451,11 +475,13 @@ class MemoryManager:
                             orm.confidence = mem.confidence
                 await session.commit()
 
-            logger.info(f"Memory decay applied: {decayed} decayed, {pruned} pruned, {len(self._memories)} remaining")
+            logger.info(
+                f"Memory decay applied: {decayed} decayed, {pruned} pruned, {len(self._memories)} remaining"
+            )
 
         return pruned
 
-    def detect_contradictions(self, new_content: str, new_confidence: float) -> Optional[str]:
+    def detect_contradictions(self, new_content: str, new_confidence: float) -> str | None:
         """Detect simple contradictions between new and existing memories."""
         new_words = {w.lower() for w in new_content.split() if len(w) >= 2}
         if not new_words:
@@ -480,7 +506,7 @@ class MemoryManager:
 
     # --- Compression & Eviction ---
 
-    async def _evict_oldest(self) -> Optional[str]:
+    async def _evict_oldest(self) -> str | None:
         """Delete the oldest non-pinned memory by created_at."""
         candidates = [m for m in self._memories.values() if not m.is_pinned]
         if not candidates:
@@ -494,7 +520,10 @@ class MemoryManager:
         """Merge similar memories via LLM."""
         async with self._compression_lock:
             now = time.monotonic()
-            if self._last_compressed_at and (now - self._last_compressed_at) < _COMPRESSION_COOLDOWN:
+            if (
+                self._last_compressed_at
+                and (now - self._last_compressed_at) < _COMPRESSION_COOLDOWN
+            ):
                 logger.debug("Memory compression skipped: cooldown active")
                 return 0
 
@@ -505,7 +534,12 @@ class MemoryManager:
 
             all_mems = sorted(unpinned, key=lambda m: m.created_at, reverse=True)
             memories_data = [
-                {"id": m.id, "content": m.content, "category": m.category, "confidence": m.confidence}
+                {
+                    "id": m.id,
+                    "content": m.content,
+                    "category": m.category,
+                    "confidence": m.confidence,
+                }
                 for m in all_mems
             ]
             original_count = len(memories_data)
@@ -563,7 +597,8 @@ class MemoryManager:
                     category = item.get("category", "fact")
                     source_confidences = [
                         self._memories[sid].confidence
-                        for sid in source_ids if sid in self._memories
+                        for sid in source_ids
+                        if sid in self._memories
                     ]
                     merged_confidence = item.get(
                         "confidence",
@@ -579,7 +614,7 @@ class MemoryManager:
                         if sid in self._memories:
                             del self._memories[sid]
 
-                    now_ts = datetime.now(timezone.utc).isoformat()
+                    now_ts = datetime.now(UTC).isoformat()
                     mem = MemoryItem(
                         id=uuid.uuid4().hex[:16],
                         content=content,
@@ -633,7 +668,7 @@ class MemoryManager:
 
     # --- Extraction ---
 
-    async def extract_and_save(self, user_message: str, assistant_message: str) -> List[MemoryItem]:
+    async def extract_and_save(self, user_message: str, assistant_message: str) -> list[MemoryItem]:
         """Extract memories from a conversation turn using LLM."""
         from open_agent.core.settings_manager import settings_manager
 
@@ -647,9 +682,7 @@ class MemoryManager:
             if freed > 0:
                 logger.info(f"Compression freed {freed} slots before extraction")
 
-        existing = "\n".join(
-            f"- [{m.category}] {m.content}" for m in self.get_all()
-        ) or "(none)"
+        existing = "\n".join(f"- [{m.category}] {m.content}" for m in self.get_all()) or "(none)"
 
         prompt = EXTRACTION_PROMPT.format(
             existing_memories=existing,
@@ -712,7 +745,9 @@ class MemoryManager:
 
                 if len(self._memories) >= memory_settings.max_memories:
                     await self._evict_oldest()
-                mem = await self.create(content, category, confidence=confidence, source="llm_inference")
+                mem = await self.create(
+                    content, category, confidence=confidence, source="llm_inference"
+                )
                 created.append(mem)
 
             if created:
@@ -723,20 +758,15 @@ class MemoryManager:
             logger.warning(f"Memory extraction failed: {e}", exc_info=True)
             return []
 
-
-    async def extract_and_save_batch(self, turns: list[tuple[str, str]]) -> List[MemoryItem]:
+    async def extract_and_save_batch(self, turns: list[tuple[str, str]]) -> list[MemoryItem]:
         """Extract memories from multiple conversation turns at once."""
         if not turns:
             return []
 
-        meaningful = [
-            (u, a) for u, a in turns
-            if len(u) >= 10 or len(a) >= 10
-        ]
+        meaningful = [(u, a) for u, a in turns if len(u) >= 10 or len(a) >= 10]
         if not meaningful:
             logger.info(
-                "All %d turns trivial (<10 chars), skipping batch extraction. "
-                "Samples: %s",
+                "All %d turns trivial (<10 chars), skipping batch extraction. Samples: %s",
                 len(turns),
                 [(u[:30], a[:30]) for u, a in turns[:2]],
             )

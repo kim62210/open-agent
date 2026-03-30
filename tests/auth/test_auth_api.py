@@ -1,7 +1,12 @@
 """Auth API endpoint integration tests."""
 
-import pytest
-from httpx import AsyncClient
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Request
+from httpx import ASGITransport, AsyncClient
+from open_agent.api.middleware import RequestLoggingMiddleware
+
+from core.auth.dependencies import get_current_user
 
 
 class TestRegister:
@@ -114,9 +119,7 @@ class TestMe:
         )
         token = login_resp.json()["access_token"]
 
-        resp = await auth_client.get(
-            "/api/auth/me", headers={"Authorization": f"Bearer {token}"}
-        )
+        resp = await auth_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
 
         assert resp.status_code == 200
         data = resp.json()
@@ -128,6 +131,85 @@ class TestMe:
         resp = await auth_client.get("/api/auth/me")
 
         assert resp.status_code == 401
+
+    async def test_authenticated_request_populates_request_state_user(
+        self,
+        auth_client: AsyncClient,
+        _patch_db_factory,
+    ):
+        await auth_client.post(
+            "/api/auth/register",
+            json={"email": "state@example.com", "username": "stateuser", "password": "password123"},
+        )
+        login_resp = await auth_client.post(
+            "/api/auth/login",
+            json={"email": "state@example.com", "password": "password123"},
+        )
+        token = login_resp.json()["access_token"]
+
+        test_app = FastAPI()
+        test_app.add_middleware(RequestLoggingMiddleware)
+
+        @test_app.get("/whoami")
+        async def whoami(
+            request: Request,
+            current_user: Annotated[dict, Depends(get_current_user)],
+        ) -> dict:
+            return {
+                "current_user": current_user,
+                "state_user": getattr(request.state, "user", None),
+            }
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/whoami",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["state_user"] == data["current_user"]
+
+
+class TestRefresh:
+    async def test_refresh_rotates_refresh_token_and_revokes_old_one(
+        self, auth_client: AsyncClient
+    ):
+        await auth_client.post(
+            "/api/auth/register",
+            json={
+                "email": "refresh@example.com",
+                "username": "refreshuser",
+                "password": "password123",
+            },
+        )
+        login_resp = await auth_client.post(
+            "/api/auth/login",
+            json={"email": "refresh@example.com", "password": "password123"},
+        )
+        original_refresh_token = login_resp.json()["refresh_token"]
+
+        refresh_resp = await auth_client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": original_refresh_token},
+        )
+
+        assert refresh_resp.status_code == 200
+        refreshed_token = refresh_resp.json()["refresh_token"]
+        assert refreshed_token != original_refresh_token
+
+        reused_resp = await auth_client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": original_refresh_token},
+        )
+        assert reused_resp.status_code == 401
+
+        latest_resp = await auth_client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": refreshed_token},
+        )
+        assert latest_resp.status_code == 200
 
 
 class TestProtectedEndpoints:
@@ -156,7 +238,11 @@ class TestProtectedEndpoints:
         # Register second user (regular user)
         reg_resp = await auth_client.post(
             "/api/auth/register",
-            json={"email": "viewer@example.com", "username": "vieweruser", "password": "password123"},
+            json={
+                "email": "viewer@example.com",
+                "username": "vieweruser",
+                "password": "password123",
+            },
         )
         viewer_user_id = reg_resp.json()["id"]
 
@@ -192,7 +278,11 @@ class TestAPIKey:
         # Register and login
         await auth_client.post(
             "/api/auth/register",
-            json={"email": "apikey@example.com", "username": "apikeyuser", "password": "password123"},
+            json={
+                "email": "apikey@example.com",
+                "username": "apikeyuser",
+                "password": "password123",
+            },
         )
         login_resp = await auth_client.post(
             "/api/auth/login",
@@ -212,9 +302,7 @@ class TestAPIKey:
         assert api_key.startswith("oa-")
 
         # Use API key to access /me
-        resp = await auth_client.get(
-            "/api/auth/me", headers={"X-API-Key": api_key}
-        )
+        resp = await auth_client.get("/api/auth/me", headers={"X-API-Key": api_key})
         assert resp.status_code == 200
         assert resp.json()["email"] == "apikey@example.com"
 
@@ -222,7 +310,11 @@ class TestAPIKey:
         """Created API keys appear in the listing."""
         await auth_client.post(
             "/api/auth/register",
-            json={"email": "listkey@example.com", "username": "listkeyuser", "password": "password123"},
+            json={
+                "email": "listkey@example.com",
+                "username": "listkeyuser",
+                "password": "password123",
+            },
         )
         login_resp = await auth_client.post(
             "/api/auth/login",
@@ -231,9 +323,7 @@ class TestAPIKey:
         token = login_resp.json()["access_token"]
         auth_headers = {"Authorization": f"Bearer {token}"}
 
-        await auth_client.post(
-            "/api/auth/api-keys", json={"name": "key1"}, headers=auth_headers
-        )
+        await auth_client.post("/api/auth/api-keys", json={"name": "key1"}, headers=auth_headers)
 
         resp = await auth_client.get("/api/auth/api-keys", headers=auth_headers)
         assert resp.status_code == 200

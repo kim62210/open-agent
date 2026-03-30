@@ -4,6 +4,7 @@ from core.db.models.job import JobORM, JobRunRecordORM
 from core.db.models.mcp_config import MCPConfigORM
 from core.db.models.memory import MemoryORM, SessionSummaryORM
 from core.db.models.page import PageORM
+from core.db.models.run import RunEventORM, RunORM
 from core.db.models.session import SessionMessageORM, SessionORM
 from core.db.models.settings import SettingsORM
 from core.db.models.skill_config import SkillConfigORM
@@ -18,6 +19,8 @@ __all__ = [
     "MemoryORM",
     "PageORM",
     "RefreshTokenORM",
+    "RunEventORM",
+    "RunORM",
     "SessionMessageORM",
     "SessionORM",
     "SessionSummaryORM",

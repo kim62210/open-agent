@@ -36,30 +36,28 @@ async def migrate_json_to_db(data_dir: Path) -> None:
     )
 
     imported_any = False
+    had_failures = False
 
     async with async_session_factory() as session:
         # --- settings.json ---
         try:
-            imported_any |= await _import_settings(
-                session, data_dir / "settings.json", SettingsORM
-            )
+            imported_any |= await _import_settings(session, data_dir / "settings.json", SettingsORM)
         except Exception as exc:
+            had_failures = True
             logger.exception("Failed to import settings.json", exc_info=exc)
 
         # --- sessions.json + sessions/{id}.json ---
         try:
-            imported_any |= await _import_sessions(
-                session, data_dir, SessionORM, SessionMessageORM
-            )
+            imported_any |= await _import_sessions(session, data_dir, SessionORM, SessionMessageORM)
         except Exception as exc:
+            had_failures = True
             logger.exception("Failed to import sessions.json", exc_info=exc)
 
         # --- memories.json ---
         try:
-            imported_any |= await _import_memories(
-                session, data_dir / "memories.json", MemoryORM
-            )
+            imported_any |= await _import_memories(session, data_dir / "memories.json", MemoryORM)
         except Exception as exc:
+            had_failures = True
             logger.exception("Failed to import memories.json", exc_info=exc)
 
         # --- jobs.json ---
@@ -68,6 +66,7 @@ async def migrate_json_to_db(data_dir: Path) -> None:
                 session, data_dir / "jobs.json", JobORM, JobRunRecordORM
             )
         except Exception as exc:
+            had_failures = True
             logger.exception("Failed to import jobs.json", exc_info=exc)
 
         # --- workspaces.json ---
@@ -76,33 +75,35 @@ async def migrate_json_to_db(data_dir: Path) -> None:
                 session, data_dir / "workspaces.json", WorkspaceORM
             )
         except Exception as exc:
+            had_failures = True
             logger.exception("Failed to import workspaces.json", exc_info=exc)
 
         # --- pages.json ---
         try:
-            imported_any |= await _import_pages(
-                session, data_dir / "pages.json", PageORM
-            )
+            imported_any |= await _import_pages(session, data_dir / "pages.json", PageORM)
         except Exception as exc:
+            had_failures = True
             logger.exception("Failed to import pages.json", exc_info=exc)
 
         # --- skills.json ---
         try:
-            imported_any |= await _import_skills(
-                session, data_dir / "skills.json", SkillConfigORM
-            )
+            imported_any |= await _import_skills(session, data_dir / "skills.json", SkillConfigORM)
         except Exception as exc:
+            had_failures = True
             logger.exception("Failed to import skills.json", exc_info=exc)
 
         # --- mcp.json ---
         try:
-            imported_any |= await _import_mcp(
-                session, data_dir / "mcp.json", MCPConfigORM
-            )
+            imported_any |= await _import_mcp(session, data_dir / "mcp.json", MCPConfigORM)
         except Exception as exc:
+            had_failures = True
             logger.exception("Failed to import mcp.json", exc_info=exc)
 
         await session.commit()
+
+    if had_failures:
+        logger.warning("JSON to DB migration completed with failures; marker not written")
+        return
 
     marker.touch()
     if imported_any:

@@ -22,6 +22,7 @@ from open_agent.models.mcp import (
 # mcp_manager.py uses json.loads/json.dumps in call_tool but does not import json.
 # Inject the missing reference so tests can exercise the happy-path.
 import open_agent.core.mcp_manager as _mcp_mod
+
 if not hasattr(_mcp_mod, "json"):
     _mcp_mod.json = json
 
@@ -354,13 +355,15 @@ class TestToolDiscovery:
         assert len(result) == 2
 
     async def test_get_tools_for_server(self, mgr):
-        cached_tools = [{
-            "function": {
-                "name": "srv__read",
-                "description": "Read file",
-                "parameters": {"type": "object"},
-            },
-        }]
+        cached_tools = [
+            {
+                "function": {
+                    "name": "srv__read",
+                    "description": "Read file",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ]
         mgr._tool_cache["srv"] = (time.monotonic(), cached_tools)
         mgr._connections["srv"] = (MagicMock(), MagicMock())
 
@@ -378,6 +381,16 @@ class TestToolDiscovery:
 
 class TestCallTool:
     """call_tool dispatches to MCP session."""
+
+    async def test_call_tool_blocks_server_not_in_allowlist(self, mgr):
+        mgr._connections["srv"] = (MagicMock(), MagicMock())
+
+        with patch("open_agent.core.settings_manager.settings_manager") as mock_settings:
+            mock_settings.settings.approval.allowed_mcp_servers = ["other-server"]
+            mock_settings.settings.approval.allowed_tool_names = []
+            result = await mgr.call_tool("srv", "read", {})
+
+        assert "not allowed" in result.lower()
 
     async def test_call_tool_text_result(self, mgr):
         from mcp import types
@@ -479,7 +492,10 @@ class TestRawConfig:
         cfg = MCPServerConfig(
             transport="streamable-http",
             url="http://example.com",
-            headers={"Authorization": "Bearer sk-1234567890abcdef", "Content-Type": "application/json"},
+            headers={
+                "Authorization": "Bearer sk-1234567890abcdef",
+                "Content-Type": "application/json",
+            },
             enabled=True,
         )
         mgr._configs["http-srv"] = cfg
@@ -521,8 +537,10 @@ class TestReloadConfig:
             patch.object(mgr, "disconnect_server", new_callable=AsyncMock) as mock_disconnect,
             patch.object(mgr, "connect_server", new_callable=AsyncMock),
         ):
+
             async def clear_configs():
                 mgr._configs.clear()
+
             mock_load.side_effect = clear_configs
 
             await mgr.reload_config()
@@ -534,8 +552,10 @@ class TestReloadConfig:
             patch.object(mgr, "load_from_db", new_callable=AsyncMock) as mock_load,
             patch.object(mgr, "connect_server", new_callable=AsyncMock) as mock_connect,
         ):
+
             async def add_new_config():
                 mgr._configs["new_srv"] = stdio_config
+
             mock_load.side_effect = add_new_config
 
             await mgr.reload_config()
@@ -547,8 +567,10 @@ class TestReloadConfig:
             patch.object(mgr, "load_from_db", new_callable=AsyncMock) as mock_load,
             patch.object(mgr, "connect_server", new_callable=AsyncMock) as mock_connect,
         ):
+
             async def add_disabled():
                 mgr._configs["dis"] = disabled_config
+
             mock_load.side_effect = add_disabled
 
             await mgr.reload_config()

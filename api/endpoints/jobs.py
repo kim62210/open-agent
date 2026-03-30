@@ -1,24 +1,23 @@
-from typing import Annotated, List
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-
-from core.auth.dependencies import require_user
-
 from open_agent.core.job_manager import job_manager, validate_job_prompt
 from open_agent.core.job_scheduler import job_scheduler
 from open_agent.models.job import CreateJobRequest, JobInfo, JobRunRecord, UpdateJobRequest
 
+from core.auth.dependencies import require_user
+
 router = APIRouter()
 
 
-@router.get("/", response_model=List[JobInfo])
+@router.get("/", response_model=list[JobInfo])
 async def list_jobs(current_user: Annotated[dict, Depends(require_user)]):
-    return job_manager.get_all_jobs()
+    return job_manager.get_all_jobs(owner_user_id=current_user["id"])
 
 
 @router.get("/{job_id}", response_model=JobInfo)
 async def get_job(job_id: str, current_user: Annotated[dict, Depends(require_user)]):
-    job = job_manager.get_job(job_id)
+    job = job_manager.get_job(job_id, owner_user_id=current_user["id"])
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     return job
@@ -30,7 +29,7 @@ async def create_job(req: CreateJobRequest, current_user: Annotated[dict, Depend
     if error:
         raise HTTPException(status_code=400, detail=error)
     try:
-        job = await job_manager.create_job(req)
+        job = await job_manager.create_job(req, owner_user_id=current_user["id"])
         job_scheduler.refresh_job(job.id)
         return job
     except Exception as e:
@@ -38,12 +37,14 @@ async def create_job(req: CreateJobRequest, current_user: Annotated[dict, Depend
 
 
 @router.patch("/{job_id}", response_model=JobInfo)
-async def update_job(job_id: str, req: UpdateJobRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def update_job(
+    job_id: str, req: UpdateJobRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     if req.prompt is not None:
         error = validate_job_prompt(req.prompt)
         if error:
             raise HTTPException(status_code=400, detail=error)
-    result = await job_manager.update_job(job_id, req)
+    result = await job_manager.update_job(job_id, req, owner_user_id=current_user["id"])
     if not result:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     job_scheduler.refresh_job(job_id)
@@ -54,14 +55,14 @@ async def update_job(job_id: str, req: UpdateJobRequest, current_user: Annotated
 async def delete_job(job_id: str, current_user: Annotated[dict, Depends(require_user)]):
     if job_scheduler.is_running(job_id):
         await job_scheduler.stop_job(job_id)
-    if not await job_manager.delete_job(job_id):
+    if not await job_manager.delete_job(job_id, owner_user_id=current_user["id"]):
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     return {"status": "deleted", "job_id": job_id}
 
 
 @router.post("/{job_id}/toggle", response_model=JobInfo)
 async def toggle_job(job_id: str, current_user: Annotated[dict, Depends(require_user)]):
-    result = await job_manager.toggle_job(job_id)
+    result = await job_manager.toggle_job(job_id, owner_user_id=current_user["id"])
     if not result:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     job_scheduler.refresh_job(job_id)
@@ -82,10 +83,12 @@ async def stop_job(job_id: str, current_user: Annotated[dict, Depends(require_us
     return {"status": "stopping", "job_id": job_id}
 
 
-@router.get("/{job_id}/history", response_model=List[JobRunRecord])
-async def get_job_history(job_id: str, current_user: Annotated[dict, Depends(require_user)], limit: int = 20):
+@router.get("/{job_id}/history", response_model=list[JobRunRecord])
+async def get_job_history(
+    job_id: str, current_user: Annotated[dict, Depends(require_user)], limit: int = 20
+):
     """실행 이력 조회"""
-    job = job_manager.get_job(job_id)
+    job = job_manager.get_job(job_id, owner_user_id=current_user["id"])
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
-    return job_manager.get_run_history(job_id, limit=limit)
+    return job_manager.get_run_history(job_id, limit=limit, owner_user_id=current_user["id"])

@@ -1,6 +1,5 @@
 """SessionManager unit tests — async DB-backed."""
 
-import pytest
 
 from open_agent.core.session_manager import SessionManager
 from open_agent.models.session import SessionMessage
@@ -66,15 +65,28 @@ class TestSessionGet:
 
     async def test_get_all_sessions_ordered(self, session_manager: SessionManager):
         """Sessions are returned ordered by updated_at descending."""
-        s1 = await session_manager.create_session(title="첫 번째")
-        s2 = await session_manager.create_session(title="두 번째")
-        s3 = await session_manager.create_session(title="세 번째")
+        s1 = await session_manager.create_session(title="첫 번째", owner_user_id="user-1")
+        s2 = await session_manager.create_session(title="두 번째", owner_user_id="user-1")
+        s3 = await session_manager.create_session(title="세 번째", owner_user_id="user-1")
 
-        result = session_manager.get_all()
+        result = session_manager.get_all(owner_user_id="user-1")
         assert len(result) == 3
         assert result[0].id == s3.id
         assert result[1].id == s2.id
         assert result[2].id == s1.id
+
+    async def test_get_all_filters_by_owner(self, session_manager: SessionManager):
+        owned = await session_manager.create_session(title="내 세션", owner_user_id="user-1")
+        await session_manager.create_session(title="남의 세션", owner_user_id="user-2")
+
+        result = session_manager.get_all(owner_user_id="user-1")
+
+        assert [session.id for session in result] == [owned.id]
+
+    async def test_get_session_denies_other_owner(self, session_manager: SessionManager):
+        owned = await session_manager.create_session(title="내 세션", owner_user_id="user-1")
+
+        assert session_manager.get_session(owned.id, owner_user_id="user-2") is None
 
 
 class TestSessionMessages:

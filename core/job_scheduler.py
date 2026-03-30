@@ -6,15 +6,55 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional
-
-from croniter import croniter
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from open_agent.core.exceptions import JobNotFoundError, JobStateError
 from open_agent.core.job_executor import execute_job
 from open_agent.core.job_manager import job_manager
 from open_agent.models.job import JobInfo
+
+from core.task_supervisor import task_supervisor
+
+try:
+    from croniter import croniter
+except ModuleNotFoundError:
+
+    class _CronIterFallback:
+        def __init__(self, expr: str, base: datetime):
+            self._base = base
+            parts = expr.split()
+            if len(parts) != 5:
+                raise ValueError(f"Invalid cron expression: {expr}")
+            self._minute, self._hour, self._day, self._month, self._weekday = parts
+
+        @staticmethod
+        def _matches(value: int, field: str) -> bool:
+            if field == "*":
+                return True
+            if "-" in field:
+                start, end = field.split("-", 1)
+                return int(start) <= value <= int(end)
+            return value == int(field)
+
+        def get_next(self, _kind: type[datetime]) -> datetime:
+            candidate = self._base.replace(second=0, microsecond=0) + timedelta(minutes=1)
+            for _ in range(60 * 24 * 366):
+                cron_weekday = candidate.isoweekday() % 7
+                if (
+                    self._matches(candidate.minute, self._minute)
+                    and self._matches(candidate.hour, self._hour)
+                    and self._matches(candidate.day, self._day)
+                    and self._matches(candidate.month, self._month)
+                    and self._matches(cron_weekday, self._weekday)
+                ):
+                    return candidate
+                candidate += timedelta(minutes=1)
+            raise ValueError("No matching cron time found within one year")
+
+    def croniter(expr: str, base: datetime) -> _CronIterFallback:
+        return _CronIterFallback(expr, base)
+
 
 logger = logging.getLogger(__name__)
 
@@ -22,25 +62,26 @@ CHECK_INTERVAL = 30  # 스케줄 체크 주기 (초)
 MAX_CONCURRENT_JOBS = 3  # 전역 동시 실행 제한
 
 
-def _get_schedule_tz(cfg: Dict[str, Any]):
+def _get_schedule_tz(cfg: dict[str, Any]):
     """schedule_config의 timezone 또는 시스템 로컬 타임존을 반환합니다."""
     tz_name = cfg.get("timezone")
     if tz_name:
         try:
             from zoneinfo import ZoneInfo
+
             return ZoneInfo(tz_name)
         except (ImportError, KeyError):
             logger.warning(f"Invalid timezone: {tz_name}, falling back to local")
     return datetime.now().astimezone().tzinfo
 
 
-def calc_next_run(job: JobInfo, after: Optional[datetime] = None) -> Optional[datetime]:
+def calc_next_run(job: JobInfo, after: datetime | None = None) -> datetime | None:
     """Job의 schedule 설정에 따라 다음 실행 시각을 계산합니다.
 
     daily, weekly, cron 스케줄은 로컬 타임존 기준으로 계산합니다.
     schedule_config에 "timezone" 키가 있으면 해당 타임존을 사용합니다.
     """
-    base = after or datetime.now(timezone.utc)
+    base = after or datetime.now(UTC)
     cfg = job.schedule_config
 
     if job.schedule_type == "once":
@@ -52,7 +93,7 @@ def calc_next_run(job: JobInfo, after: Optional[datetime] = None) -> Optional[da
             if run_at.tzinfo is None:
                 tz = _get_schedule_tz(cfg)
                 run_at = run_at.replace(tzinfo=tz)
-            run_at_utc = run_at.astimezone(timezone.utc)
+            run_at_utc = run_at.astimezone(UTC)
             if run_at_utc > base:
                 return run_at_utc
         except (ValueError, TypeError):
@@ -77,7 +118,7 @@ def calc_next_run(job: JobInfo, after: Optional[datetime] = None) -> Optional[da
         today_target = local_base.replace(hour=h, minute=m, second=0, microsecond=0)
         if today_target <= local_base:
             today_target += timedelta(days=1)
-        return today_target.astimezone(timezone.utc)
+        return today_target.astimezone(UTC)
 
     if job.schedule_type == "weekly":
         target_weekday = int(cfg.get("weekday", 0))  # 0=Sun..6=Sat
@@ -92,7 +133,7 @@ def calc_next_run(job: JobInfo, after: Optional[datetime] = None) -> Optional[da
         next_t = next_day.replace(hour=h, minute=m, second=0, microsecond=0)
         if next_t <= local_base:
             next_t += timedelta(weeks=1)
-        return next_t.astimezone(timezone.utc)
+        return next_t.astimezone(UTC)
 
     if job.schedule_type == "cron":
         expr = cfg.get("cron_expr", "0 0 * * *")
@@ -103,7 +144,7 @@ def calc_next_run(job: JobInfo, after: Optional[datetime] = None) -> Optional[da
             next_t = cron.get_next(datetime)
             if next_t.tzinfo is None:
                 next_t = next_t.replace(tzinfo=tz)
-            return next_t.astimezone(timezone.utc)
+            return next_t.astimezone(UTC)
         except (ValueError, KeyError) as e:
             logger.warning(f"Invalid cron expression for job {job.id}: {expr} — {e}")
             return None
@@ -115,14 +156,17 @@ class JobScheduler:
     """asyncio 기반 경량 스케줄러."""
 
     def __init__(self):
-        self._task: Optional[asyncio.Task] = None
-        self._running_tasks: Dict[str, asyncio.Task] = {}  # job_id → Task
+        self._task: asyncio.Task | None = None
+        self._running_tasks: dict[str, asyncio.Task] = {}  # job_id → Task
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
     async def start(self) -> None:
         if self._task and not self._task.done():
             return
-        self._task = asyncio.create_task(self._loop())
+        self._task = task_supervisor.track(
+            asyncio.create_task(self._loop()),
+            name="job_scheduler.loop",
+        )
         logger.info("Job scheduler started (check every %ds)", CHECK_INTERVAL)
         await self._refresh_all_next_run()
 
@@ -135,7 +179,7 @@ class JobScheduler:
                 pass
             self._task = None
         # 실행 중인 Job들도 모두 취소
-        for job_id, task in list(self._running_tasks.items()):
+        for _job_id, task in list(self._running_tasks.items()):
             task.cancel()
         self._running_tasks.clear()
         logger.info("Job scheduler stopped")
@@ -144,12 +188,19 @@ class JobScheduler:
         """특정 Job의 next_run_at를 재계산합니다 (sync wrapper, schedules async)."""
         job = job_manager.get_job(job_id)
         if not job or not job.enabled:
-            # Schedule async operation
-            asyncio.ensure_future(job_manager.set_next_run_at(job_id, None))
+            task_supervisor.track(
+                asyncio.create_task(job_manager.set_next_run_at(job_id, None)),
+                name="job_scheduler.refresh",
+                metadata={"job_id": job_id},
+            )
             return
         next_t = calc_next_run(job)
-        asyncio.ensure_future(
-            job_manager.set_next_run_at(job_id, next_t.isoformat() if next_t else None)
+        task_supervisor.track(
+            asyncio.create_task(
+                job_manager.set_next_run_at(job_id, next_t.isoformat() if next_t else None)
+            ),
+            name="job_scheduler.refresh",
+            metadata={"job_id": job_id},
         )
 
     async def _refresh_all_next_run(self) -> None:
@@ -158,9 +209,7 @@ class JobScheduler:
                 await job_manager.set_next_run_at(job.id, None)
                 continue
             next_t = calc_next_run(job)
-            await job_manager.set_next_run_at(
-                job.id, next_t.isoformat() if next_t else None
-            )
+            await job_manager.set_next_run_at(job.id, next_t.isoformat() if next_t else None)
 
     async def _loop(self) -> None:
         while True:
@@ -173,7 +222,7 @@ class JobScheduler:
             await asyncio.sleep(CHECK_INTERVAL)
 
     async def _tick(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for job in job_manager.get_all_jobs():
             if not job.enabled:
                 continue
@@ -190,12 +239,16 @@ class JobScheduler:
 
     def _spawn_job(self, job_id: str) -> None:
         """Job 실행 Task를 생성합니다."""
-        task = asyncio.create_task(self._run_job(job_id))
+        task = task_supervisor.track(
+            asyncio.create_task(self._run_job(job_id)),
+            name="job_scheduler.run",
+            metadata={"job_id": job_id},
+        )
         self._running_tasks[job_id] = task
 
     async def _run_job(self, job_id: str) -> None:
         """세마포어로 동시 실행 제한 후 Job을 실행합니다."""
-        run_id: Optional[str] = None
+        run_id: str | None = None
         try:
             logger.debug(f"Job waiting for slot ({job_id})")
             async with self._semaphore:
@@ -208,11 +261,15 @@ class JobScheduler:
                     await job_manager.finish_run(job_id, run_id, "success", summary=summary)
                 except asyncio.CancelledError:
                     logger.info(f"Job cancelled ({job_id})")
-                    await job_manager.finish_run(job_id, run_id, "cancelled", summary="Cancelled by user")
+                    await job_manager.finish_run(
+                        job_id, run_id, "cancelled", summary="Cancelled by user"
+                    )
                     raise
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"Job timed out ({job_id})")
-                    await job_manager.finish_run(job_id, run_id, "timeout", summary="Execution timed out (300s)")
+                    await job_manager.finish_run(
+                        job_id, run_id, "timeout", summary="Execution timed out (300s)"
+                    )
                 except Exception as e:
                     logger.error(f"Job execution failed ({job_id}): {e}")
                     await job_manager.finish_run(job_id, run_id, "failed", summary=str(e)[:500])

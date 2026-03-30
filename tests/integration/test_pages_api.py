@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-
 from open_agent.models.page import PageInfo
 
 
@@ -12,17 +11,22 @@ from open_agent.models.page import PageInfo
 async def pages_client(_patch_db_factory, monkeypatch):
     """httpx.AsyncClient wired to pages router with mocked page_manager."""
     import httpx
-    from httpx import ASGITransport
-
     from fastapi import FastAPI
-    from core.auth.dependencies import get_current_user
+    from httpx import ASGITransport
     from open_agent.api.endpoints import pages as pages_router
+
+    from core.auth.dependencies import get_current_user
 
     test_app = FastAPI()
     test_app.include_router(pages_router.router, prefix="/api/pages")
 
     async def _fake_current_user() -> dict:
-        return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "admin"}
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "testuser",
+            "role": "admin",
+        }
 
     test_app.dependency_overrides[get_current_user] = _fake_current_user
 
@@ -33,8 +37,13 @@ async def pages_client(_patch_db_factory, monkeypatch):
 
 def _make_page_info(id="page-1", name="Test Page", content_type="html", published=False):
     return PageInfo(
-        id=id, name=name, description="", content_type=content_type,
-        filename="index.html", size_bytes=100, published=published,
+        id=id,
+        name=name,
+        description="",
+        content_type=content_type,
+        filename="index.html",
+        size_bytes=100,
+        published=published,
     )
 
 
@@ -55,7 +64,7 @@ class TestListPages:
             mock_pm.get_children.return_value = []
             resp = await pages_client.get("/api/pages/", params={"parent_id": "folder-1"})
         assert resp.status_code == 200
-        mock_pm.get_children.assert_called_once_with("folder-1")
+        mock_pm.get_children.assert_called_once_with("folder-1", owner_user_id="test-user-id")
 
 
 class TestGetPage:
@@ -86,18 +95,14 @@ class TestUpdatePage:
         page = _make_page_info(name="Updated")
         with patch("open_agent.api.endpoints.pages.page_manager") as mock_pm:
             mock_pm.update_page = AsyncMock(return_value=page)
-            resp = await pages_client.patch(
-                "/api/pages/page-1", json={"name": "Updated"}
-            )
+            resp = await pages_client.patch("/api/pages/page-1", json={"name": "Updated"})
         assert resp.status_code == 200
 
     async def test_update_nonexistent_page(self, pages_client: AsyncClient):
         """Returns 404 for non-existent page."""
         with patch("open_agent.api.endpoints.pages.page_manager") as mock_pm:
             mock_pm.update_page = AsyncMock(return_value=None)
-            resp = await pages_client.patch(
-                "/api/pages/nonexistent", json={"name": "Nope"}
-            )
+            resp = await pages_client.patch("/api/pages/nonexistent", json={"name": "Nope"})
         assert resp.status_code == 404
 
 
@@ -128,10 +133,14 @@ class TestCreateFolder:
         folder = _make_page_info(content_type="folder")
         with patch("open_agent.api.endpoints.pages.page_manager") as mock_pm:
             mock_pm.create_folder = AsyncMock(return_value=folder)
-            resp = await pages_client.post(
-                "/api/pages/folders", json={"name": "My Folder"}
-            )
+            resp = await pages_client.post("/api/pages/folders", json={"name": "My Folder"})
         assert resp.status_code == 200
+        mock_pm.create_folder.assert_awaited_once_with(
+            "My Folder",
+            "",
+            None,
+            owner_user_id="test-user-id",
+        )
 
 
 class TestCreateBookmark:
@@ -254,9 +263,7 @@ class TestPageKVStorage:
         with patch("open_agent.api.endpoints.pages.page_manager") as mock_pm:
             mock_pm.get_page.return_value = _make_page_info()
             mock_pm.kv_set = MagicMock()
-            resp = await pages_client.put(
-                "/api/pages/page-1/kv/key1", json={"value": "new-val"}
-            )
+            resp = await pages_client.put("/api/pages/page-1/kv/key1", json={"value": "new-val"})
         assert resp.status_code == 200
 
     async def test_kv_delete_key(self, pages_client: AsyncClient):
@@ -293,9 +300,7 @@ class TestPageKVStorage:
         """Returns 404 when page not found for KV set."""
         with patch("open_agent.api.endpoints.pages.page_manager") as mock_pm:
             mock_pm.get_page.return_value = None
-            resp = await pages_client.put(
-                "/api/pages/nonexistent/kv/key1", json={"value": "val"}
-            )
+            resp = await pages_client.put("/api/pages/nonexistent/kv/key1", json={"value": "val"})
         assert resp.status_code == 404
 
     async def test_kv_delete_page_not_found(self, pages_client: AsyncClient):
@@ -452,7 +457,7 @@ class TestListPagesWithParent:
             mock_pm.get_children.return_value = []
             resp = await pages_client.get("/api/pages/", params={"parent_id": "null"})
         assert resp.status_code == 200
-        mock_pm.get_children.assert_called_once_with(None)
+        mock_pm.get_children.assert_called_once_with(None, owner_user_id="test-user-id")
 
     async def test_list_pages_no_parent(self, pages_client: AsyncClient):
         """Returns all pages when no parent_id specified."""

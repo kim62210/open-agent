@@ -1,14 +1,12 @@
 """JobScheduler unit tests — cron parsing, next run calculation, scheduler lifecycle."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from open_agent.core.exceptions import JobNotFoundError, JobStateError
 from open_agent.core.job_scheduler import (
-    CHECK_INTERVAL,
     MAX_CONCURRENT_JOBS,
     JobScheduler,
     _get_schedule_tz,
@@ -16,12 +14,16 @@ from open_agent.core.job_scheduler import (
 )
 from open_agent.models.job import JobInfo
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = datetime(2026, 3, 30, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 3, 30, 12, 0, 0, tzinfo=UTC)
+
+
+def _capture_task(coro):
+    coro.close()
+    return MagicMock()
 
 
 def _make_job(
@@ -183,7 +185,7 @@ class TestCalcNextRun:
         )
         result = calc_next_run(job, after=_NOW)
         assert result is not None
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_daily_with_timezone(self):
         job = _make_job(
@@ -192,7 +194,7 @@ class TestCalcNextRun:
         )
         result = calc_next_run(job, after=_NOW)
         assert result is not None
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_weekly_with_timezone(self):
         job = _make_job(
@@ -201,7 +203,7 @@ class TestCalcNextRun:
         )
         result = calc_next_run(job, after=_NOW)
         assert result is not None
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
 
 # ---------------------------------------------------------------------------
@@ -409,22 +411,26 @@ class TestRefreshJob:
         with patch("open_agent.core.job_scheduler.job_manager") as mock_jm:
             mock_jm.get_job.return_value = job
             mock_jm.set_next_run_at = AsyncMock()
-            # Patch asyncio.ensure_future to capture the call
-            with patch("asyncio.ensure_future") as mock_ef:
-                scheduler.refresh_job("test1")
-                mock_ef.assert_called_once()
+            with patch("open_agent.core.job_scheduler.task_supervisor") as mock_supervisor:
+                with patch(
+                    "open_agent.core.job_scheduler.asyncio.create_task", side_effect=_capture_task
+                ):
+                    scheduler.refresh_job("test1")
+                mock_supervisor.track.assert_called_once()
 
     def test_refresh_nonexistent_job(self):
         scheduler = JobScheduler()
         with patch("open_agent.core.job_scheduler.job_manager") as mock_jm:
             mock_jm.get_job.return_value = None
-            with patch("asyncio.ensure_future") as mock_ef:
-                scheduler.refresh_job("nope")
-                mock_ef.assert_called_once()
+            with patch("open_agent.core.job_scheduler.task_supervisor") as mock_supervisor:
+                with patch(
+                    "open_agent.core.job_scheduler.asyncio.create_task", side_effect=_capture_task
+                ):
+                    scheduler.refresh_job("nope")
+                mock_supervisor.track.assert_called_once()
 
     def test_refresh_enabled_job(self):
         scheduler = JobScheduler()
-        future = (_NOW + timedelta(hours=1)).isoformat()
         job = _make_job(
             enabled=True,
             schedule_type="daily",
@@ -433,9 +439,23 @@ class TestRefreshJob:
 
         with patch("open_agent.core.job_scheduler.job_manager") as mock_jm:
             mock_jm.get_job.return_value = job
-            with patch("asyncio.ensure_future") as mock_ef:
-                scheduler.refresh_job("test1")
-                mock_ef.assert_called_once()
+            with patch("open_agent.core.job_scheduler.task_supervisor") as mock_supervisor:
+                with patch(
+                    "open_agent.core.job_scheduler.asyncio.create_task", side_effect=_capture_task
+                ):
+                    scheduler.refresh_job("test1")
+                mock_supervisor.track.assert_called_once()
+
+    def test_spawn_job_registers_supervised_task(self):
+        scheduler = JobScheduler()
+
+        with patch("open_agent.core.job_scheduler.task_supervisor") as mock_supervisor:
+            with patch(
+                "open_agent.core.job_scheduler.asyncio.create_task", side_effect=_capture_task
+            ):
+                scheduler._spawn_job("job-1")
+
+        mock_supervisor.track.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +527,7 @@ class TestRunJob:
             patch(
                 "open_agent.core.job_scheduler.execute_job",
                 new_callable=AsyncMock,
-                side_effect=asyncio.TimeoutError(),
+                side_effect=TimeoutError(),
             ),
         ):
             mock_jm.start_run = AsyncMock(return_value="run1")

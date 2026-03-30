@@ -1,10 +1,10 @@
 """Jobs API integration tests — CRUD, toggle, run/stop."""
 
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-
 from open_agent.models.job import JobInfo
 
 
@@ -12,17 +12,25 @@ from open_agent.models.job import JobInfo
 async def jobs_client(_patch_db_factory, monkeypatch):
     """httpx.AsyncClient wired to jobs router with mocked managers."""
     import httpx
+    from fastapi import FastAPI
     from httpx import ASGITransport
 
-    from fastapi import FastAPI
-    from core.auth.dependencies import get_current_user
+    monkeypatch.setitem(sys.modules, "croniter", MagicMock())
+
     from open_agent.api.endpoints import jobs as jobs_router
+
+    from core.auth.dependencies import get_current_user
 
     test_app = FastAPI()
     test_app.include_router(jobs_router.router, prefix="/api/jobs")
 
     async def _fake_current_user() -> dict:
-        return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "admin"}
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "testuser",
+            "role": "admin",
+        }
 
     test_app.dependency_overrides[get_current_user] = _fake_current_user
 
@@ -33,9 +41,16 @@ async def jobs_client(_patch_db_factory, monkeypatch):
 
 def _make_job_info(id="job-1", name="Test Job"):
     return JobInfo(
-        id=id, name=name, description="", prompt="Do something",
-        skill_names=[], mcp_server_names=[], schedule_type="once",
-        schedule_config={}, enabled=True, created_at="2024-01-01T00:00:00Z",
+        id=id,
+        name=name,
+        description="",
+        prompt="Do something",
+        skill_names=[],
+        mcp_server_names=[],
+        schedule_type="once",
+        schedule_config={},
+        enabled=True,
+        created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
     )
 
@@ -88,10 +103,14 @@ class TestCreateJob:
                         json={"name": "Test Job", "prompt": "Do something"},
                     )
         assert resp.status_code == 200
+        mock_jm.create_job.assert_awaited_once()
+        assert mock_jm.create_job.await_args.kwargs["owner_user_id"] == "test-user-id"
 
     async def test_create_job_invalid_prompt(self, jobs_client: AsyncClient):
         """Returns 400 for invalid prompt."""
-        with patch("open_agent.api.endpoints.jobs.validate_job_prompt", return_value="Prompt too short"):
+        with patch(
+            "open_agent.api.endpoints.jobs.validate_job_prompt", return_value="Prompt too short"
+        ):
             resp = await jobs_client.post(
                 "/api/jobs/",
                 json={"name": "Bad Job", "prompt": "x"},
@@ -138,7 +157,7 @@ class TestToggleJob:
     async def test_toggle_nonexistent_job(self, jobs_client: AsyncClient):
         """Returns 404 for non-existent job."""
         with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
-            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler"):
                 mock_jm.toggle_job = AsyncMock(return_value=None)
                 resp = await jobs_client.post("/api/jobs/nonexistent/toggle")
         assert resp.status_code == 404
@@ -197,7 +216,7 @@ class TestUpdateJob:
     async def test_update_job_not_found(self, jobs_client: AsyncClient):
         """Returns 404 for non-existent job."""
         with patch("open_agent.api.endpoints.jobs.job_manager") as mock_jm:
-            with patch("open_agent.api.endpoints.jobs.job_scheduler") as mock_sched:
+            with patch("open_agent.api.endpoints.jobs.job_scheduler"):
                 with patch("open_agent.api.endpoints.jobs.validate_job_prompt", return_value=None):
                     mock_jm.update_job = AsyncMock(return_value=None)
                     resp = await jobs_client.patch(
@@ -208,7 +227,9 @@ class TestUpdateJob:
 
     async def test_update_job_invalid_prompt(self, jobs_client: AsyncClient):
         """Returns 400 when updated prompt is invalid."""
-        with patch("open_agent.api.endpoints.jobs.validate_job_prompt", return_value="Prompt too short"):
+        with patch(
+            "open_agent.api.endpoints.jobs.validate_job_prompt", return_value="Prompt too short"
+        ):
             resp = await jobs_client.patch(
                 "/api/jobs/job-1",
                 json={"prompt": "x"},
