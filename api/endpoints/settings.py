@@ -45,7 +45,7 @@ def _fetch_version_sync() -> dict:
     if gh_token:
         try:
             req = urllib.request.Request(
-                "https://api.github.com/repos/EJCHO-salary/track_platform/releases?per_page=20",
+                "https://api.github.com/repos/kim62210/open-agent/releases?per_page=20",
                 headers={
                     "Accept": "application/vnd.github+json",
                     "Authorization": f"Bearer {gh_token}",
@@ -64,7 +64,7 @@ def _fetch_version_sync() -> dict:
     if not latest:
         try:
             req = urllib.request.Request(
-                "https://pypi.org/pypi/open-agent-platform/json",
+                "https://pypi.org/pypi/open-agent/json",
                 headers={"Accept": "application/json"},
             )
             with urllib.request.urlopen(req, timeout=5) as resp:

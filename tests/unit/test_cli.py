@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -101,13 +101,54 @@ class TestStartCommand:
 class TestUpdateCommand:
     """open-agent update command."""
 
+    def test_update_targets_open_agent_release_repo(self, runner):
+        import subprocess
+
+        from open_agent.cli import main
+
+        seen_release_cmds = []
+
+        def mock_run(cmd, **kwargs):
+            if cmd[0] == "gh" and "auth" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="fake-token\n", stderr="")
+            if cmd[0] == "gh" and "--version" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="gh 2.0", stderr="")
+            if cmd[0] == "gh" and "release" in cmd:
+                seen_release_cmds.append(cmd)
+                if "list" in cmd:
+                    return subprocess.CompletedProcess(
+                        cmd,
+                        0,
+                        stdout='[{"tagName": "v1.0.0"}]',
+                        stderr="",
+                    )
+                if "view" in cmd:
+                    return subprocess.CompletedProcess(
+                        cmd,
+                        0,
+                        stdout='{"tagName": "v1.0.0", "assets": [{"name": "open_agent-1.0.0-py3-none-any.whl"}]}',
+                        stderr="",
+                    )
+                if "download" in cmd:
+                    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            if cmd[0] == "uv":
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False):
+            with patch("subprocess.run", side_effect=mock_run):
+                result = runner.invoke(main, ["update"])
+
+        assert result.exit_code == 0
+        assert seen_release_cmds
+        for cmd in seen_release_cmds:
+            assert "kim62210/open-agent" in cmd
+
     def test_update_no_token(self, runner):
         """update command fails gracefully without GitHub token."""
         from open_agent.cli import main
 
-        with patch.dict(
-            "os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False
-        ):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False):
             with patch(
                 "subprocess.run",
                 side_effect=FileNotFoundError("gh not found"),
@@ -119,9 +160,7 @@ class TestUpdateCommand:
         """update with version argument passes correctly."""
         from open_agent.cli import main
 
-        with patch.dict(
-            "os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False
-        ):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False):
             with patch(
                 "subprocess.run",
                 side_effect=FileNotFoundError("gh not found"),
@@ -132,6 +171,7 @@ class TestUpdateCommand:
     def test_update_with_gh_token_env(self, runner):
         """update with GITHUB_TOKEN env but gh CLI unavailable."""
         import subprocess
+
         from open_agent.cli import main
 
         def mock_run(cmd, **kwargs):
@@ -141,17 +181,14 @@ class TestUpdateCommand:
                 raise FileNotFoundError("gh not found")
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        with patch.dict(
-            "os.environ", {"GITHUB_TOKEN": "fake-token", "GH_TOKEN": ""}, clear=False
-        ):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "fake-token", "GH_TOKEN": ""}, clear=False):
             with patch("subprocess.run", side_effect=mock_run):
                 # urllib will fail since the URL is fake
                 import urllib.error
+
                 with patch(
                     "urllib.request.urlopen",
-                    side_effect=urllib.error.HTTPError(
-                        "url", 404, "Not Found", {}, None
-                    ),
+                    side_effect=urllib.error.HTTPError("url", 404, "Not Found", {}, None),
                 ):
                     result = runner.invoke(main, ["update"])
         assert result.exit_code == 0
@@ -159,6 +196,7 @@ class TestUpdateCommand:
     def test_update_subprocess_error(self, runner):
         """update handles CalledProcessError gracefully."""
         import subprocess
+
         from open_agent.cli import main
 
         def mock_run(cmd, **kwargs):
@@ -168,9 +206,7 @@ class TestUpdateCommand:
                 return subprocess.CompletedProcess(cmd, 0, stdout="gh 2.0", stderr="")
             raise subprocess.CalledProcessError(1, cmd, stderr="some error")
 
-        with patch.dict(
-            "os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False
-        ):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False):
             with patch("subprocess.run", side_effect=mock_run):
                 result = runner.invoke(main, ["update"])
         assert result.exit_code == 0
@@ -178,6 +214,7 @@ class TestUpdateCommand:
     def test_update_generic_exception(self, runner):
         """update handles unexpected exceptions gracefully."""
         import subprocess
+
         from open_agent.cli import main
 
         def mock_run(cmd, **kwargs):
@@ -188,22 +225,24 @@ class TestUpdateCommand:
             # Simulate listing releases with valid JSON
             if "release" in cmd and "list" in cmd:
                 import json
+
                 releases = json.dumps([{"tagName": "v1.0.0"}])
                 return subprocess.CompletedProcess(cmd, 0, stdout=releases, stderr="")
             if "release" in cmd and "view" in cmd:
                 import json
-                release = json.dumps({
-                    "tagName": "v1.0.0",
-                    "assets": [{"name": "test-0.1.0-py3-none-any.whl"}],
-                })
+
+                release = json.dumps(
+                    {
+                        "tagName": "v1.0.0",
+                        "assets": [{"name": "test-0.1.0-py3-none-any.whl"}],
+                    }
+                )
                 return subprocess.CompletedProcess(cmd, 0, stdout=release, stderr="")
             if "release" in cmd and "download" in cmd:
                 raise RuntimeError("Download failed unexpectedly")
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        with patch.dict(
-            "os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False
-        ):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False):
             with patch("subprocess.run", side_effect=mock_run):
                 result = runner.invoke(main, ["update"])
         assert result.exit_code == 0
@@ -211,6 +250,7 @@ class TestUpdateCommand:
     def test_update_no_whl_in_release(self, runner):
         """update handles release with no .whl files."""
         import subprocess
+
         from open_agent.cli import main
 
         def mock_run(cmd, **kwargs):
@@ -220,20 +260,22 @@ class TestUpdateCommand:
                 return subprocess.CompletedProcess(cmd, 0, stdout="gh 2.0", stderr="")
             if "release" in cmd and "list" in cmd:
                 import json
+
                 releases = json.dumps([{"tagName": "v1.0.0"}])
                 return subprocess.CompletedProcess(cmd, 0, stdout=releases, stderr="")
             if "release" in cmd and "view" in cmd:
                 import json
-                release = json.dumps({
-                    "tagName": "v1.0.0",
-                    "assets": [{"name": "README.md"}],
-                })
+
+                release = json.dumps(
+                    {
+                        "tagName": "v1.0.0",
+                        "assets": [{"name": "README.md"}],
+                    }
+                )
                 return subprocess.CompletedProcess(cmd, 0, stdout=release, stderr="")
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        with patch.dict(
-            "os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False
-        ):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False):
             with patch("subprocess.run", side_effect=mock_run):
                 result = runner.invoke(main, ["update"])
         assert result.exit_code == 0
@@ -241,6 +283,7 @@ class TestUpdateCommand:
     def test_update_no_python_release(self, runner):
         """update handles case with no v* Python releases."""
         import subprocess
+
         from open_agent.cli import main
 
         def mock_run(cmd, **kwargs):
@@ -250,16 +293,17 @@ class TestUpdateCommand:
                 return subprocess.CompletedProcess(cmd, 0, stdout="gh 2.0", stderr="")
             if "release" in cmd and "list" in cmd:
                 import json
-                releases = json.dumps([
-                    {"tagName": "desktop-v1.0.0"},
-                    {"tagName": "mac-desktop-v2.0.0"},
-                ])
+
+                releases = json.dumps(
+                    [
+                        {"tagName": "desktop-v1.0.0"},
+                        {"tagName": "mac-desktop-v2.0.0"},
+                    ]
+                )
                 return subprocess.CompletedProcess(cmd, 0, stdout=releases, stderr="")
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        with patch.dict(
-            "os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False
-        ):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "", "GH_TOKEN": ""}, clear=False):
             with patch("subprocess.run", side_effect=mock_run):
                 result = runner.invoke(main, ["update"])
         assert result.exit_code == 0
@@ -282,7 +326,9 @@ class TestInitDataDir:
 
             with patch.object(config_mod, "get_data_dir", side_effect=_mock_get_data_dir):
                 with patch.object(config_mod, "get_pages_dir", return_value=tmp_path / "pages"):
-                    with patch.object(config_mod, "get_skills_dir", return_value=tmp_path / "skills"):
+                    with patch.object(
+                        config_mod, "get_skills_dir", return_value=tmp_path / "skills"
+                    ):
                         with patch.object(
                             config_mod, "get_sessions_dir", return_value=tmp_path / "sessions"
                         ):
@@ -319,7 +365,9 @@ class TestInitDataDir:
 
             with patch.object(config_mod, "get_data_dir", side_effect=_mock_get_data_dir):
                 with patch.object(config_mod, "get_pages_dir", return_value=tmp_path / "pages"):
-                    with patch.object(config_mod, "get_skills_dir", return_value=tmp_path / "skills"):
+                    with patch.object(
+                        config_mod, "get_skills_dir", return_value=tmp_path / "skills"
+                    ):
                         with patch.object(
                             config_mod, "get_sessions_dir", return_value=tmp_path / "sessions"
                         ):

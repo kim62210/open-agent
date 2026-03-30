@@ -1,7 +1,6 @@
 import click
-from rich.console import Console
-
 from open_agent import __version__
+from rich.console import Console
 
 console = Console()
 
@@ -21,6 +20,7 @@ def main():
 def start(host: str, port: int, dev: bool, expose: bool):
     """서버 시작 (프론트엔드 + API)"""
     import os
+
     import uvicorn
 
     if dev:
@@ -53,7 +53,9 @@ def init():
     data_dir = init_data_dir()
     console.print(f"[green]✓[/] 데이터 디렉토리: {data_dir}")
     console.print("[dim]  .env, mcp.json, settings.json, skills.json, pages.json 생성 완료[/]")
-    console.print(f"\n[bold]다음 단계:[/] {data_dir / '.env'} 에 사용할 프로바이더의 API 키를 설정하세요.\n")
+    console.print(
+        f"\n[bold]다음 단계:[/] {data_dir / '.env'} 에 사용할 프로바이더의 API 키를 설정하세요.\n"
+    )
     console.print("  [bold]GOOGLE_API_KEY[/]       — Google Gemini")
     console.print("  [bold]OPENAI_API_KEY[/]       — OpenAI GPT")
     console.print("  [bold]ANTHROPIC_API_KEY[/]    — Anthropic Claude")
@@ -98,7 +100,7 @@ def update(version: str | None):
     import tempfile
     import urllib.request
 
-    repo = "EJCHO-salary/track_platform"
+    repo = "kim62210/open-agent"
 
     # --- 현재 플랫폼에 맞는 wheel 패턴 결정 ---
     system = platform.system().lower()
@@ -119,7 +121,10 @@ def update(version: str | None):
     if not token:
         try:
             result = subprocess.run(
-                ["gh", "auth", "token"], capture_output=True, text=True, check=True,
+                ["gh", "auth", "token"],
+                capture_output=True,
+                text=True,
+                check=True,
             )
             token = result.stdout.strip()
             has_gh = True
@@ -158,7 +163,9 @@ def update(version: str | None):
                 # latest 대신 릴리스 목록에서 v* 태그만 필터 (desktop-v*, mac-desktop-v* 제외)
                 result = subprocess.run(
                     ["gh", "release", "list", "--repo", repo, "--limit", "20", "--json", "tagName"],
-                    capture_output=True, text=True, check=True,
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 )
                 releases = json.loads(result.stdout)
                 tag_name = None
@@ -172,7 +179,9 @@ def update(version: str | None):
                     return
                 result = subprocess.run(
                     ["gh", "release", "view", tag_name, "--repo", repo, "--json", "tagName,assets"],
-                    capture_output=True, text=True, check=True,
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 )
                 release = json.loads(result.stdout)
         else:
@@ -222,7 +231,9 @@ def update(version: str | None):
         if not whl_name and all_whls:
             # 플랫폼 매칭 실패 시 첫 번째 whl 사용 (pure python 등)
             whl_name = all_whls[0]
-            console.print(f"[yellow]현재 플랫폼({system}/{machine})에 맞는 wheel이 없어 {whl_name}을 사용합니다.[/]")
+            console.print(
+                f"[yellow]현재 플랫폼({system}/{machine})에 맞는 wheel이 없어 {whl_name}을 사용합니다.[/]"
+            )
 
         if not whl_name:
             console.print("[red]릴리스에 .whl 파일이 없습니다.[/]")
@@ -238,22 +249,29 @@ def update(version: str | None):
                 # gh release download로 인증된 다운로드 (현재 플랫폼 wheel만)
                 subprocess.run(
                     [
-                        "gh", "release", "download", tag_name,
-                        "--repo", repo,
-                        "--pattern", whl_name,
-                        "--dir", tmpdir,
+                        "gh",
+                        "release",
+                        "download",
+                        tag_name,
+                        "--repo",
+                        repo,
+                        "--pattern",
+                        whl_name,
+                        "--dir",
+                        tmpdir,
                     ],
                     check=True,
                 )
             else:
                 # urllib로 직접 다운로드 (API URL + Accept header)
-                asset_url = next(
-                    a["url"] for a in release["assets"] if a["name"] == whl_name
+                asset_url = next(a["url"] for a in release["assets"] if a["name"] == whl_name)
+                dl_req = urllib.request.Request(
+                    asset_url,
+                    headers={
+                        "Authorization": f"token {token}",
+                        "Accept": "application/octet-stream",
+                    },
                 )
-                dl_req = urllib.request.Request(asset_url, headers={
-                    "Authorization": f"token {token}",
-                    "Accept": "application/octet-stream",
-                })
                 with urllib.request.urlopen(dl_req) as resp:
                     with open(local_whl, "wb") as f:
                         f.write(resp.read())
@@ -273,9 +291,6 @@ def update(version: str | None):
             console.print(f"[red]GitHub API 오류: {e.code} {e.reason}[/]")
     except subprocess.CalledProcessError as e:
         stderr = e.stderr or ""
-        console.print(
-            f"[red]명령 실행 실패[/]\n"
-            f"[dim]{stderr[:300]}[/]"
-        )
+        console.print(f"[red]명령 실행 실패[/]\n[dim]{stderr[:300]}[/]")
     except Exception as e:
         console.print(f"[red]업데이트 실패: {e}[/]")

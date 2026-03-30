@@ -430,3 +430,36 @@ class TestVersionEndpoint:
         data = resp.json()
         assert "current" in data
         assert "update_available" in data
+
+    def test_fetch_version_sync_uses_open_agent_sources(self):
+        import json
+
+        from open_agent.api.endpoints.settings import _fetch_version_sync
+
+        seen_urls = []
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def read(self):
+                return json.dumps(self._payload).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def fake_urlopen(req, timeout=5):
+            seen_urls.append(req.full_url)
+            if "api.github.com" in req.full_url:
+                return FakeResponse([{"tag_name": "v1.0.0"}])
+            return FakeResponse({"info": {"version": "1.0.0"}})
+
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "gh-test"}, clear=False):
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                result = _fetch_version_sync()
+
+        assert result["latest"] == "1.0.0"
+        assert any("repos/kim62210/open-agent/releases" in url for url in seen_urls)
