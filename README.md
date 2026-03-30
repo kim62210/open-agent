@@ -79,6 +79,11 @@ flowchart TB
 
 For a detailed architecture walkthrough with request flow, authentication flow, and schema relationships, see [docs/architecture.md](docs/architecture.md).
 
+Operational references:
+
+- [docs/deployment.md](docs/deployment.md)
+- [docs/upgrade.md](docs/upgrade.md)
+
 ## Quickstart
 
 ### Prerequisites
