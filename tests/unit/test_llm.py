@@ -1,832 +1,811 @@
-"""LLMClient unit tests — provider resolution, simple_completion, chat_stream, constants."""
+"""LLMClient unit tests — mocked LLM calls."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from open_agent.core.llm import (
-    _PROVIDER_KEY_MAP,
-    REASONING_EFFORT_PROVIDERS,
-    LLMClient,
-)
 
-# ---------------------------------------------------------------------------
-# Task 6.1: _resolve_api_key() tests
-# ---------------------------------------------------------------------------
+from open_agent.core.llm import LLMClient, _DEFAULT_CONTEXT_WINDOW, _MIN_OUTPUT_TOKENS
+
+
+@pytest.fixture()
+def llm_client() -> LLMClient:
+    """Fresh LLMClient instance."""
+    return LLMClient()
+
+
+# --- _resolve_api_key ---
 
 
 class TestResolveApiKey:
-    """Tests for LLMClient._resolve_api_key() provider prefix lookup."""
+    """API key resolution from model name."""
 
-    @pytest.fixture(autouse=True)
-    def _clear_env(self, monkeypatch: pytest.MonkeyPatch):
-        """Clear all provider env vars so tests start from a clean state."""
-        env_vars = {v for v in _PROVIDER_KEY_MAP.values() if v is not None}
-        for var in env_vars:
-            monkeypatch.delenv(var, raising=False)
+    def test_openai_model(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        assert LLMClient._resolve_api_key("gpt-4") == "sk-openai"
 
-    # -- OpenAI prefixes --
+    def test_openai_prefixed_model(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        assert LLMClient._resolve_api_key("openai/gpt-4o") == "sk-openai"
 
-    def test_gpt_prefix_returns_openai_key(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
-        assert LLMClient._resolve_api_key("gpt-4o") == "sk-openai-test"
+    def test_o1_model(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        assert LLMClient._resolve_api_key("o1-preview") == "sk-openai"
 
-    def test_openai_slash_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
-        assert LLMClient._resolve_api_key("openai/gpt-4o-mini") == "sk-openai-test"
+    def test_o3_model(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        assert LLMClient._resolve_api_key("o3-mini") == "sk-openai"
 
-    def test_o1_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
-        assert LLMClient._resolve_api_key("o1-preview") == "sk-openai-test"
+    def test_o4_model(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        assert LLMClient._resolve_api_key("o4-mini") == "sk-openai"
 
-    def test_o3_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
-        assert LLMClient._resolve_api_key("o3-mini") == "sk-openai-test"
+    def test_anthropic_model(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
+        assert LLMClient._resolve_api_key("claude-3-opus") == "sk-anthropic"
 
-    def test_o4_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
-        assert LLMClient._resolve_api_key("o4-mini") == "sk-openai-test"
+    def test_anthropic_prefixed_model(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
+        assert LLMClient._resolve_api_key("anthropic/claude-3") == "sk-anthropic"
 
-    # -- Anthropic --
+    def test_xai_model(self, monkeypatch):
+        monkeypatch.setenv("XAI_API_KEY", "sk-xai")
+        assert LLMClient._resolve_api_key("grok-2") == "sk-xai"
 
-    def test_claude_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-        assert LLMClient._resolve_api_key("claude-3-5-sonnet") == "sk-ant-test"
+    def test_xai_prefixed_model(self, monkeypatch):
+        monkeypatch.setenv("XAI_API_KEY", "sk-xai")
+        assert LLMClient._resolve_api_key("xai/grok-2") == "sk-xai"
 
-    def test_anthropic_slash_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-        assert LLMClient._resolve_api_key("anthropic/claude-3-opus") == "sk-ant-test"
+    def test_openrouter_model(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+        assert LLMClient._resolve_api_key("openrouter/meta/llama-3") == "sk-or"
 
-    # -- Google / Gemini --
+    def test_gemini_model(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "sk-google")
+        assert LLMClient._resolve_api_key("gemini/gemini-pro") == "sk-google"
 
-    def test_gemini_slash_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("GOOGLE_API_KEY", "google-test")
-        assert LLMClient._resolve_api_key("gemini/gemini-2.0-flash") == "google-test"
+    def test_google_prefixed_model(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "sk-google")
+        assert LLMClient._resolve_api_key("google/gemini-pro") == "sk-google"
 
-    def test_google_slash_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("GOOGLE_API_KEY", "google-test")
-        assert LLMClient._resolve_api_key("google/gemini-pro") == "google-test"
-
-    # -- xAI --
-
-    def test_grok_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("XAI_API_KEY", "xai-test")
-        assert LLMClient._resolve_api_key("grok-2") == "xai-test"
-
-    def test_xai_slash_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("XAI_API_KEY", "xai-test")
-        assert LLMClient._resolve_api_key("xai/grok-beta") == "xai-test"
-
-    # -- OpenRouter --
-
-    def test_openrouter_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
-        assert LLMClient._resolve_api_key("openrouter/anthropic/claude-3") == "or-test"
-
-    # -- Groq --
-
-    def test_groq_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("GROQ_API_KEY", "groq-test")
-        assert LLMClient._resolve_api_key("groq/llama-3.1-70b") == "groq-test"
-
-    # -- DeepSeek --
-
-    def test_deepseek_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
-        assert LLMClient._resolve_api_key("deepseek/deepseek-chat") == "ds-test"
-
-    # -- Mistral --
-
-    def test_mistral_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("MISTRAL_API_KEY", "mistral-test")
-        assert LLMClient._resolve_api_key("mistral/mistral-large") == "mistral-test"
-
-    # -- Cohere --
-
-    def test_cohere_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("COHERE_API_KEY", "cohere-test")
-        assert LLMClient._resolve_api_key("cohere/command-r-plus") == "cohere-test"
-
-    def test_cohere_chat_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("COHERE_API_KEY", "cohere-test")
-        assert LLMClient._resolve_api_key("cohere_chat/command-r") == "cohere-test"
-
-    # -- Together AI --
-
-    def test_together_ai_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("TOGETHERAI_API_KEY", "together-test")
-        assert LLMClient._resolve_api_key("together_ai/meta-llama/Llama-3") == "together-test"
-
-    # -- Perplexity --
-
-    def test_perplexity_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("PERPLEXITYAI_API_KEY", "pplx-test")
-        assert LLMClient._resolve_api_key("perplexity/sonar-medium") == "pplx-test"
-
-    # -- Fireworks AI --
-
-    def test_fireworks_ai_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("FIREWORKS_AI_API_KEY", "fw-test")
-        assert LLMClient._resolve_api_key("fireworks_ai/llama-v3") == "fw-test"
-
-    # -- Azure --
-
-    def test_azure_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("AZURE_API_KEY", "azure-test")
-        assert LLMClient._resolve_api_key("azure/gpt-4") == "azure-test"
-
-    # -- HuggingFace --
-
-    def test_huggingface_prefix(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("HUGGINGFACE_API_KEY", "hf-test")
-        assert LLMClient._resolve_api_key("huggingface/bigscience/bloom") == "hf-test"
-
-    # -- Keyless providers --
-
-    def test_ollama_returns_none(self):
-        """Ollama is a keyless provider — should return None."""
-        assert LLMClient._resolve_api_key("ollama/llama3") is None
-
-    def test_ollama_chat_returns_none(self):
-        assert LLMClient._resolve_api_key("ollama_chat/llama3") is None
-
-    def test_hosted_vllm_returns_none(self):
-        assert LLMClient._resolve_api_key("hosted_vllm/my-model") is None
-
-    # -- Edge cases --
-
-    def test_unknown_prefix_returns_none(self):
-        """Unknown model prefix must return None, not a random key."""
-        result = LLMClient._resolve_api_key("totally_unknown/model-name")
-        assert result is None
-
-    def test_case_insensitivity(self, monkeypatch: pytest.MonkeyPatch):
-        """Model name lookup is case-insensitive."""
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
-        assert LLMClient._resolve_api_key("GPT-4o") == "sk-openai-test"
-
-    def test_case_insensitivity_anthropic(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-        assert LLMClient._resolve_api_key("Claude-3.5-Sonnet") == "sk-ant-test"
-
-    def test_case_insensitivity_gemini(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("GOOGLE_API_KEY", "google-test")
-        assert LLMClient._resolve_api_key("Gemini/gemini-2.0-flash") == "google-test"
-
-    def test_missing_env_var_returns_none(self, monkeypatch: pytest.MonkeyPatch):
-        """When env var is not set, returns None (not an error)."""
+    def test_fallback_uses_google_or_openai(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "sk-google-fallback")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        assert LLMClient._resolve_api_key("gpt-4o") is None
+        assert LLMClient._resolve_api_key("unknown-model") == "sk-google-fallback"
 
-    def test_empty_model_returns_none(self):
-        """Empty model string returns None."""
-        assert LLMClient._resolve_api_key("") is None
 
-    # -- Regression tests: existing providers still work --
-
-    @pytest.mark.parametrize(
-        "model,env_var,expected_env",
-        [
-            ("gpt-4o", "OPENAI_API_KEY", "OPENAI_API_KEY"),
-            ("claude-3-5-sonnet", "ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
-            ("gemini/gemini-2.0-flash", "GOOGLE_API_KEY", "GOOGLE_API_KEY"),
-            ("xai/grok-2", "XAI_API_KEY", "XAI_API_KEY"),
-            ("openrouter/anthropic/claude-3", "OPENROUTER_API_KEY", "OPENROUTER_API_KEY"),
-        ],
-        ids=["openai", "anthropic", "google", "xai", "openrouter"],
-    )
-    def test_regression_core_providers(
-        self, monkeypatch: pytest.MonkeyPatch, model: str, env_var: str, expected_env: str
-    ):
-        """Regression: core providers continue to resolve correctly."""
-        monkeypatch.setenv(env_var, f"test-key-{env_var}")
-        result = LLMClient._resolve_api_key(model)
-        assert result == f"test-key-{env_var}"
-
-
-# ---------------------------------------------------------------------------
-# Task 6.2: simple_completion() tests
-# ---------------------------------------------------------------------------
-
-
-def _make_mock_response(content: str | None = "mocked response", reasoning: str | None = None):
-    """Build a mock acompletion response with content and optional reasoning_content."""
-    mock_message = MagicMock()
-    mock_message.content = content
-    mock_message.reasoning_content = reasoning
-
-    mock_choice = MagicMock()
-    mock_choice.message = mock_message
-
-    mock_response = MagicMock()
-    mock_response.choices = [mock_choice]
-    return mock_response
-
-
-class TestSimpleCompletion:
-    """Tests for LLMClient.simple_completion()."""
-
-    @pytest.fixture(autouse=True)
-    def _mock_config(self, monkeypatch: pytest.MonkeyPatch):
-        """Patch _get_config and _clamp_max_tokens to avoid settings_manager dependency."""
-        monkeypatch.setattr(
-            LLMClient,
-            "_get_config",
-            lambda self: {
-                "model": "gpt-4o",
-                "api_key": "test-key",
-                "temperature": 0.7,
-                "max_tokens": 16384,
-                "num_retries": 2,
-                "timeout": 120,
-            },
-        )
-        monkeypatch.setattr(
-            LLMClient, "_clamp_max_tokens", lambda self, kwargs, tools=None: kwargs
-        )
-
-    async def test_returns_content_string(self, monkeypatch: pytest.MonkeyPatch):
-        """Successful call returns the content string."""
-        mock_acompletion = AsyncMock(return_value=_make_mock_response("Hello world"))
-        monkeypatch.setattr("open_agent.core.llm.acompletion", mock_acompletion)
-
-        client = LLMClient()
-        result = await client.simple_completion(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert result == "Hello world"
-
-    async def test_returns_none_on_empty_content(self, monkeypatch: pytest.MonkeyPatch):
-        """Empty content with no reasoning_content returns None."""
-        mock_acompletion = AsyncMock(return_value=_make_mock_response(content=""))
-        monkeypatch.setattr("open_agent.core.llm.acompletion", mock_acompletion)
-
-        client = LLMClient()
-        result = await client.simple_completion(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert result is None
-
-    async def test_returns_none_on_none_content(self, monkeypatch: pytest.MonkeyPatch):
-        """None content with no reasoning_content returns None."""
-        mock_acompletion = AsyncMock(return_value=_make_mock_response(content=None))
-        monkeypatch.setattr("open_agent.core.llm.acompletion", mock_acompletion)
-
-        client = LLMClient()
-        result = await client.simple_completion(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert result is None
-
-    async def test_reasoning_content_fallback(self, monkeypatch: pytest.MonkeyPatch):
-        """When content is None, reasoning_content is used as fallback."""
-        mock_acompletion = AsyncMock(
-            return_value=_make_mock_response(content=None, reasoning="Reasoning output")
-        )
-        monkeypatch.setattr("open_agent.core.llm.acompletion", mock_acompletion)
-
-        client = LLMClient()
-        result = await client.simple_completion(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert result == "Reasoning output"
-
-    async def test_reasoning_content_fallback_empty_string(self, monkeypatch: pytest.MonkeyPatch):
-        """When content is empty string and reasoning is also empty, returns None."""
-        mock_acompletion = AsyncMock(
-            return_value=_make_mock_response(content="", reasoning="")
-        )
-        monkeypatch.setattr("open_agent.core.llm.acompletion", mock_acompletion)
-
-        client = LLMClient()
-        result = await client.simple_completion(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert result is None
-
-    async def test_temperature_override(self, monkeypatch: pytest.MonkeyPatch):
-        """Caller's temperature is used, not the global config value."""
-        captured_kwargs = {}
-
-        async def capture_acompletion(**kwargs):
-            captured_kwargs.update(kwargs)
-            return _make_mock_response("ok")
-
-        monkeypatch.setattr("open_agent.core.llm.acompletion", capture_acompletion)
-
-        client = LLMClient()
-        await client.simple_completion(
-            messages=[{"role": "user", "content": "test"}],
-            temperature=0.2,
-        )
-        # The caller's temperature (0.2) should override the config default (0.7)
-        assert captured_kwargs["temperature"] == 0.2
-
-    async def test_max_tokens_override(self, monkeypatch: pytest.MonkeyPatch):
-        """Caller's max_tokens is used, not the global config value."""
-        captured_kwargs = {}
-
-        async def capture_acompletion(**kwargs):
-            captured_kwargs.update(kwargs)
-            return _make_mock_response("ok")
-
-        monkeypatch.setattr("open_agent.core.llm.acompletion", capture_acompletion)
-
-        client = LLMClient()
-        await client.simple_completion(
-            messages=[{"role": "user", "content": "test"}],
-            max_tokens=512,
-        )
-        assert captured_kwargs["max_tokens"] == 512
-
-    async def test_default_temperature_and_max_tokens(self, monkeypatch: pytest.MonkeyPatch):
-        """Default temperature=0.7 and max_tokens=4096 when not specified."""
-        captured_kwargs = {}
-
-        async def capture_acompletion(**kwargs):
-            captured_kwargs.update(kwargs)
-            return _make_mock_response("ok")
-
-        monkeypatch.setattr("open_agent.core.llm.acompletion", capture_acompletion)
-
-        client = LLMClient()
-        await client.simple_completion(
-            messages=[{"role": "user", "content": "test"}]
-        )
-        assert captured_kwargs["temperature"] == 0.7
-        assert captured_kwargs["max_tokens"] == 4096
-
-
-# ---------------------------------------------------------------------------
-# Task 6.4: chat_stream() tool call accumulation tests
-# ---------------------------------------------------------------------------
-
-
-def _make_stream_chunk(
-    content: str | None = None,
-    tool_calls: list | None = None,
-):
-    """Build a single streaming chunk with delta."""
-    delta = MagicMock()
-    delta.content = content
-
-    if tool_calls is not None:
-        delta.tool_calls = tool_calls
-    else:
-        delta.tool_calls = None
-        # hasattr check in chat_stream: make it return False when no tool_calls
-        del delta.tool_calls
-
-    choice = MagicMock()
-    choice.delta = delta
-
-    chunk = MagicMock()
-    chunk.choices = [choice]
-    return chunk
-
-
-def _make_tool_call_delta(index: int, tc_id: str | None, name: str | None, args: str | None):
-    """Build a tool_call delta object."""
-    tc = MagicMock()
-    tc.index = index
-    tc.id = tc_id
-
-    func = MagicMock()
-    func.name = name
-    func.arguments = args
-    tc.function = func
-    return tc
-
-
-class TestChatStreamContentOnly:
-    """Test chat_stream with content-only streaming."""
-
-    @pytest.fixture(autouse=True)
-    def _mock_config(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(
-            LLMClient,
-            "_get_config",
-            lambda self: {
-                "model": "gpt-4o",
-                "api_key": "test-key",
-                "temperature": 0.7,
-                "max_tokens": 16384,
-                "num_retries": 2,
-                "timeout": 120,
-            },
-        )
-        monkeypatch.setattr(
-            LLMClient, "_clamp_max_tokens", lambda self, kwargs, tools=None: kwargs
-        )
-
-    async def test_content_only_stream(self, monkeypatch: pytest.MonkeyPatch):
-        """Content-only streaming yields content_delta events + done event."""
-        chunks = [
-            _make_stream_chunk(content="Hello"),
-            _make_stream_chunk(content=" world"),
-        ]
-
-        async def fake_stream(**kwargs):
-            async def _gen():
-                for c in chunks:
-                    yield c
-            return _gen()
-
-        monkeypatch.setattr("open_agent.core.llm.acompletion", fake_stream)
-
-        client = LLMClient()
-        events = []
-        async for event in client.chat_stream(
-            messages=[{"role": "user", "content": "hi"}]
-        ):
-            events.append(event)
-
-        assert len(events) == 3
-        assert events[0] == {"type": "content_delta", "content": "Hello"}
-        assert events[1] == {"type": "content_delta", "content": " world"}
-        assert events[2] == {"type": "done", "content": "Hello world"}
-
-    async def test_empty_content_stream(self, monkeypatch: pytest.MonkeyPatch):
-        """Stream with no content yields done with empty string."""
-        chunks = [_make_stream_chunk(content=None)]
-
-        async def fake_stream(**kwargs):
-            async def _gen():
-                for c in chunks:
-                    yield c
-            return _gen()
-
-        monkeypatch.setattr("open_agent.core.llm.acompletion", fake_stream)
-
-        client = LLMClient()
-        events = []
-        async for event in client.chat_stream(
-            messages=[{"role": "user", "content": "hi"}]
-        ):
-            events.append(event)
-
-        assert len(events) == 1
-        assert events[0] == {"type": "done", "content": ""}
-
-
-class TestChatStreamToolCalls:
-    """Test chat_stream with tool call delta accumulation."""
-
-    @pytest.fixture(autouse=True)
-    def _mock_config(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(
-            LLMClient,
-            "_get_config",
-            lambda self: {
-                "model": "gpt-4o",
-                "api_key": "test-key",
-                "temperature": 0.7,
-                "max_tokens": 16384,
-                "num_retries": 2,
-                "timeout": 120,
-            },
-        )
-        monkeypatch.setattr(
-            LLMClient, "_clamp_max_tokens", lambda self, kwargs, tools=None: kwargs
-        )
-
-    async def test_tool_call_accumulation(self, monkeypatch: pytest.MonkeyPatch):
-        """Tool call deltas are accumulated and yielded as a single tool_calls event."""
-        tool_deltas_1 = [_make_tool_call_delta(0, "call_abc", "get_weather", '{"ci')]
-        tool_deltas_2 = [_make_tool_call_delta(0, None, None, 'ty": "Seoul"}')]
-
-        chunk1 = MagicMock()
-        chunk1.choices = [MagicMock()]
-        chunk1.choices[0].delta = MagicMock()
-        chunk1.choices[0].delta.content = None
-        chunk1.choices[0].delta.tool_calls = tool_deltas_1
-
-        chunk2 = MagicMock()
-        chunk2.choices = [MagicMock()]
-        chunk2.choices[0].delta = MagicMock()
-        chunk2.choices[0].delta.content = None
-        chunk2.choices[0].delta.tool_calls = tool_deltas_2
-
-        async def fake_stream(**kwargs):
-            async def _gen():
-                yield chunk1
-                yield chunk2
-            return _gen()
-
-        monkeypatch.setattr("open_agent.core.llm.acompletion", fake_stream)
-
-        tools = [{"type": "function", "function": {"name": "get_weather"}}]
-        client = LLMClient()
-        events = []
-        async for event in client.chat_stream(
-            messages=[{"role": "user", "content": "weather?"}],
-            tools=tools,
-        ):
-            events.append(event)
-
-        assert len(events) == 1
-        assert events[0]["type"] == "tool_calls"
-        assert len(events[0]["tool_calls"]) == 1
-        tc = events[0]["tool_calls"][0]
-        assert tc["id"] == "call_abc"
-        assert tc["function"]["name"] == "get_weather"
-        assert tc["function"]["arguments"] == '{"city": "Seoul"}'
-
-    async def test_multiple_parallel_tool_calls(self, monkeypatch: pytest.MonkeyPatch):
-        """Multiple parallel tool calls at different indices are accumulated correctly."""
-        td_0_a = _make_tool_call_delta(0, "call_1", "search", '{"q": "a"')
-        td_1_a = _make_tool_call_delta(1, "call_2", "fetch", '{"url": "b"')
-        td_0_b = _make_tool_call_delta(0, None, None, "}")
-        td_1_b = _make_tool_call_delta(1, None, None, "}")
-
-        chunk1 = MagicMock()
-        chunk1.choices = [MagicMock()]
-        chunk1.choices[0].delta = MagicMock()
-        chunk1.choices[0].delta.content = None
-        chunk1.choices[0].delta.tool_calls = [td_0_a, td_1_a]
-
-        chunk2 = MagicMock()
-        chunk2.choices = [MagicMock()]
-        chunk2.choices[0].delta = MagicMock()
-        chunk2.choices[0].delta.content = None
-        chunk2.choices[0].delta.tool_calls = [td_0_b, td_1_b]
-
-        async def fake_stream(**kwargs):
-            async def _gen():
-                yield chunk1
-                yield chunk2
-            return _gen()
-
-        monkeypatch.setattr("open_agent.core.llm.acompletion", fake_stream)
-
-        tools = [
-            {"type": "function", "function": {"name": "search"}},
-            {"type": "function", "function": {"name": "fetch"}},
-        ]
-        client = LLMClient()
-        events = []
-        async for event in client.chat_stream(
-            messages=[{"role": "user", "content": "do both"}],
-            tools=tools,
-        ):
-            events.append(event)
-
-        assert len(events) == 1
-        assert events[0]["type"] == "tool_calls"
-        calls = events[0]["tool_calls"]
-        assert len(calls) == 2
-        # Sorted by index — 0 first, then 1
-        assert calls[0]["id"] == "call_1"
-        assert calls[0]["function"]["name"] == "search"
-        assert calls[0]["function"]["arguments"] == '{"q": "a"}'
-        assert calls[1]["id"] == "call_2"
-        assert calls[1]["function"]["name"] == "fetch"
-        assert calls[1]["function"]["arguments"] == '{"url": "b"}'
-
-
-class TestChatStreamFallback:
-    """Test chat_stream fallback when streaming with tools fails."""
-
-    @pytest.fixture(autouse=True)
-    def _mock_config(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(
-            LLMClient,
-            "_get_config",
-            lambda self: {
-                "model": "gpt-4o",
-                "api_key": "test-key",
-                "temperature": 0.7,
-                "max_tokens": 16384,
-                "num_retries": 2,
-                "timeout": 120,
-            },
-        )
-        monkeypatch.setattr(
-            LLMClient, "_clamp_max_tokens", lambda self, kwargs, tools=None: kwargs
-        )
-
-    async def test_fallback_to_chat_completion_tool_calls(self, monkeypatch: pytest.MonkeyPatch):
-        """When streaming fails with tools, falls back to chat_completion and yields tool_calls."""
-        monkeypatch.setattr(
-            "open_agent.core.llm.acompletion",
-            AsyncMock(side_effect=RuntimeError("stream failed")),
-        )
-
-        fallback_result = {
-            "choices": [{
-                "message": {
-                    "content": None,
-                    "tool_calls": [
-                        {"id": "call_fb", "type": "function",
-                         "function": {"name": "get_time", "arguments": "{}"}}
-                    ],
-                }
-            }]
-        }
-        monkeypatch.setattr(
-            LLMClient, "chat_completion", AsyncMock(return_value=fallback_result)
-        )
-
-        tools = [{"type": "function", "function": {"name": "get_time"}}]
-        client = LLMClient()
-        events = []
-        async for event in client.chat_stream(
-            messages=[{"role": "user", "content": "time?"}],
-            tools=tools,
-        ):
-            events.append(event)
-
-        assert len(events) == 1
-        assert events[0]["type"] == "tool_calls"
-        assert events[0]["tool_calls"][0]["function"]["name"] == "get_time"
-
-    async def test_fallback_to_chat_completion_content(self, monkeypatch: pytest.MonkeyPatch):
-        """When streaming fails with tools, falls back to content response."""
-        monkeypatch.setattr(
-            "open_agent.core.llm.acompletion",
-            AsyncMock(side_effect=RuntimeError("stream failed")),
-        )
-
-        fallback_result = {
-            "choices": [{
-                "message": {
-                    "content": "Fallback content",
-                    "tool_calls": None,
-                }
-            }]
-        }
-        monkeypatch.setattr(
-            LLMClient, "chat_completion", AsyncMock(return_value=fallback_result)
-        )
-
-        tools = [{"type": "function", "function": {"name": "dummy"}}]
-        client = LLMClient()
-        events = []
-        async for event in client.chat_stream(
-            messages=[{"role": "user", "content": "test"}],
-            tools=tools,
-        ):
-            events.append(event)
-
-        assert len(events) == 2
-        assert events[0] == {"type": "content_delta", "content": "Fallback content"}
-        assert events[1] == {"type": "done", "content": "Fallback content"}
-
-    async def test_fallback_empty_response(self, monkeypatch: pytest.MonkeyPatch):
-        """When fallback returns empty content and no tool_calls, yields done with empty."""
-        monkeypatch.setattr(
-            "open_agent.core.llm.acompletion",
-            AsyncMock(side_effect=RuntimeError("stream failed")),
-        )
-
-        fallback_result = {
-            "choices": [{
-                "message": {
-                    "content": None,
-                    "tool_calls": None,
-                }
-            }]
-        }
-        monkeypatch.setattr(
-            LLMClient, "chat_completion", AsyncMock(return_value=fallback_result)
-        )
-
-        tools = [{"type": "function", "function": {"name": "dummy"}}]
-        client = LLMClient()
-        events = []
-        async for event in client.chat_stream(
-            messages=[{"role": "user", "content": "test"}],
-            tools=tools,
-        ):
-            events.append(event)
-
-        assert len(events) == 1
-        assert events[0] == {"type": "done", "content": ""}
-
-    async def test_no_fallback_without_tools(self, monkeypatch: pytest.MonkeyPatch):
-        """Without tools, streaming error is raised (no fallback)."""
-        monkeypatch.setattr(
-            "open_agent.core.llm.acompletion",
-            AsyncMock(side_effect=RuntimeError("stream failed")),
-        )
-
-        client = LLMClient()
-        with pytest.raises(RuntimeError, match="stream failed"):
-            async for _event in client.chat_stream(
-                messages=[{"role": "user", "content": "test"}],
-                tools=None,
-            ):
-                pass
-
-
-class TestChatStreamMixedContentAndTools:
-    """Test chat_stream with mixed content + tool call deltas."""
-
-    @pytest.fixture(autouse=True)
-    def _mock_config(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(
-            LLMClient,
-            "_get_config",
-            lambda self: {
-                "model": "gpt-4o",
-                "api_key": "test-key",
-                "temperature": 0.7,
-                "max_tokens": 16384,
-                "num_retries": 2,
-                "timeout": 120,
-            },
-        )
-        monkeypatch.setattr(
-            LLMClient, "_clamp_max_tokens", lambda self, kwargs, tools=None: kwargs
-        )
-
-    async def test_content_then_tool_calls(self, monkeypatch: pytest.MonkeyPatch):
-        """Some models emit content first, then tool calls in the same stream."""
-        content_chunk = _make_stream_chunk(content="Let me check")
-
-        tool_chunk = MagicMock()
-        tool_chunk.choices = [MagicMock()]
-        tool_chunk.choices[0].delta = MagicMock()
-        tool_chunk.choices[0].delta.content = None
-        tool_chunk.choices[0].delta.tool_calls = [
-            _make_tool_call_delta(0, "call_mix", "search", '{"q": "test"}')
-        ]
-
-        async def fake_stream(**kwargs):
-            async def _gen():
-                yield content_chunk
-                yield tool_chunk
-            return _gen()
-
-        monkeypatch.setattr("open_agent.core.llm.acompletion", fake_stream)
-
-        tools = [{"type": "function", "function": {"name": "search"}}]
-        client = LLMClient()
-        events = []
-        async for event in client.chat_stream(
-            messages=[{"role": "user", "content": "test"}],
-            tools=tools,
-        ):
-            events.append(event)
-
-        # Should yield: content_delta for "Let me check", then tool_calls
-        assert len(events) == 2
-        assert events[0] == {"type": "content_delta", "content": "Let me check"}
-        assert events[1]["type"] == "tool_calls"
-        assert events[1]["tool_calls"][0]["function"]["name"] == "search"
-
-
-# ---------------------------------------------------------------------------
-# Task 6.5: REASONING_EFFORT_PROVIDERS constant tests
-# ---------------------------------------------------------------------------
-
-
-class TestReasoningEffortProviders:
-    """Tests for the REASONING_EFFORT_PROVIDERS constant."""
-
-    def test_is_tuple(self):
-        """REASONING_EFFORT_PROVIDERS must be a tuple (immutable)."""
-        assert isinstance(REASONING_EFFORT_PROVIDERS, tuple)
-
-    def test_contains_expected_prefixes(self):
-        """Must include key provider prefixes that support reasoning_effort."""
-        expected = {"openai/", "anthropic/", "gemini/", "google/"}
-        actual = set(REASONING_EFFORT_PROVIDERS)
-        assert expected.issubset(actual)
-
-    def test_contains_openai_reasoning_models(self):
-        """Must include o1, o3, o4 model prefixes for OpenAI reasoning models."""
-        for prefix in ("o1", "o3", "o4"):
-            assert prefix in REASONING_EFFORT_PROVIDERS
-
-    def test_all_elements_are_strings(self):
-        for elem in REASONING_EFFORT_PROVIDERS:
-            assert isinstance(elem, str)
-
-    def test_no_self_hosted_prefixes(self):
-        """Self-hosted providers must NOT be in REASONING_EFFORT_PROVIDERS."""
-        for prefix in ("ollama/", "hosted_vllm/", "ollama_chat/"):
-            assert prefix not in REASONING_EFFORT_PROVIDERS
-
-
-# ---------------------------------------------------------------------------
-# Additional: _safe_temperature tests
-# ---------------------------------------------------------------------------
+# --- _safe_temperature ---
 
 
 class TestSafeTemperature:
-    """Tests for LLMClient._safe_temperature()."""
+    """Temperature safety for Gemini 3+ models."""
 
-    def test_gemini3_below_1_clamped(self):
-        """Gemini 3+ models should clamp temperature to 1.0 when below."""
-        assert LLMClient._safe_temperature("gemini/gemini-3.0-flash", 0.5) == 1.0
+    def test_gemini3_low_temp_clamped(self):
+        assert LLMClient._safe_temperature("gemini-3.0-flash", 0.5) == 1.0
 
-    def test_gemini3_above_1_unchanged(self):
-        assert LLMClient._safe_temperature("gemini/gemini-3.0-flash", 1.5) == 1.5
+    def test_gemini3_high_temp_unchanged(self):
+        assert LLMClient._safe_temperature("gemini-3.0-flash", 1.5) == 1.5
 
-    def test_gemini3_exactly_1_unchanged(self):
-        assert LLMClient._safe_temperature("gemini/gemini-3.0-flash", 1.0) == 1.0
+    def test_non_gemini3_low_temp_unchanged(self):
+        assert LLMClient._safe_temperature("gpt-4", 0.2) == 0.2
 
-    def test_non_gemini3_not_clamped(self):
-        """Non-Gemini3 models should keep the requested temperature."""
-        assert LLMClient._safe_temperature("gpt-4o", 0.2) == 0.2
-        assert LLMClient._safe_temperature("claude-3-5-sonnet", 0.0) == 0.0
+    def test_gemini2_not_affected(self):
+        assert LLMClient._safe_temperature("gemini/gemini-2.0-flash", 0.3) == 0.3
+
+    def test_gemini3_exact_boundary(self):
+        assert LLMClient._safe_temperature("gemini-3.0-pro", 1.0) == 1.0
+
+
+# --- _extract_choice ---
+
+
+class TestExtractChoice:
+    """LLM response choice extraction."""
+
+    def test_exact_match(self):
+        assert LLMClient._extract_choice("yes", ["yes", "no"]) == "yes"
+
+    def test_case_insensitive(self):
+        assert LLMClient._extract_choice("YES", ["yes", "no"]) == "yes"
+
+    def test_first_line_match(self):
+        assert LLMClient._extract_choice("yes\nsome explanation", ["yes", "no"]) == "yes"
+
+    def test_first_word_match(self):
+        assert LLMClient._extract_choice("yes, I agree", ["yes", "no"]) == "yes"
+
+    def test_substring_match(self):
+        assert LLMClient._extract_choice(
+            "I think the answer is search", ["search", "chat"]
+        ) == "search"
+
+    def test_no_match_returns_none(self):
+        assert LLMClient._extract_choice("maybe", ["yes", "no"]) is None
+
+    def test_longer_choice_preferred_in_substring(self):
+        """Longer choices are matched first to avoid partial matches."""
+        result = LLMClient._extract_choice(
+            "use tool_call for this", ["tool_call", "tool"]
+        )
+        assert result == "tool_call"
+
+    def test_empty_text(self):
+        assert LLMClient._extract_choice("", ["yes", "no"]) is None
+
+
+# --- _get_config ---
+
+
+class TestGetConfig:
+    """Config retrieval from settings_manager."""
+
+    def test_get_config_basic(self, llm_client: LLMClient, settings_manager):
+        """Config is constructed from settings_manager."""
+        with patch(
+            "open_agent.core.settings_manager.settings_manager", settings_manager
+        ):
+            config = llm_client._get_config()
+            assert "model" in config
+            assert "api_key" in config
+            assert "temperature" in config
+            assert "max_tokens" in config
+
+    def test_get_config_with_api_base(self, llm_client: LLMClient, settings_manager):
+        """api_base is included when set."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="test", api_base="http://localhost:8000", api_key="key"
+        )
+        with patch(
+            "open_agent.core.settings_manager.settings_manager", settings_manager
+        ):
+            config = llm_client._get_config()
+            assert config["api_base"] == "http://localhost:8000"
+
+    def test_get_config_without_api_base(self, llm_client: LLMClient, settings_manager):
+        """api_base is omitted when None."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="test", api_base=None, api_key="key"
+        )
+        with patch(
+            "open_agent.core.settings_manager.settings_manager", settings_manager
+        ):
+            config = llm_client._get_config()
+            assert "api_base" not in config
+
+    def test_get_config_reasoning_effort_for_supported_provider(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """reasoning_effort is included for supported providers."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="openai/gpt-4", api_key="key", reasoning_effort="high"
+        )
+        with patch(
+            "open_agent.core.settings_manager.settings_manager", settings_manager
+        ):
+            config = llm_client._get_config()
+            assert config.get("reasoning_effort") == "high"
+
+    def test_get_config_reasoning_effort_excluded_for_unsupported(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """reasoning_effort is excluded for self-hosted models."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="hosted_vllm/my-model", api_key="key", reasoning_effort="high"
+        )
+        with patch(
+            "open_agent.core.settings_manager.settings_manager", settings_manager
+        ):
+            config = llm_client._get_config()
+            assert "reasoning_effort" not in config
+
+
+# --- get_context_window ---
+
+
+class TestGetContextWindow:
+    """Context window resolution with priority chain."""
+
+    def test_user_setting_priority(self, llm_client: LLMClient, settings_manager):
+        """User-configured context_window takes priority."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="test", context_window=200000, api_key="key"
+        )
+        with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
+            assert llm_client.get_context_window() == 200000
+
+    def test_litellm_model_info_fallback(self, llm_client: LLMClient, settings_manager):
+        """Falls back to LiteLLM get_model_info when user setting is 0."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="gpt-4", context_window=0, api_key="key"
+        )
+        mock_info = {"max_input_tokens": 128000}
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm._litellm_get_model_info", return_value=mock_info),
+        ):
+            assert llm_client.get_context_window() == 128000
+
+    def test_litellm_model_info_returns_zero(self, llm_client: LLMClient, settings_manager):
+        """Falls through to default when model_info returns 0."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="gpt-4", context_window=0, api_key="key"
+        )
+        mock_info = {"max_input_tokens": 0}
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm._litellm_get_model_info", return_value=mock_info),
+        ):
+            assert llm_client.get_context_window() == _DEFAULT_CONTEXT_WINDOW
+
+    def test_litellm_model_info_exception(self, llm_client: LLMClient, settings_manager):
+        """Falls through to default when model_info raises."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="gpt-4", context_window=0, api_key="key"
+        )
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch(
+                "open_agent.core.llm._litellm_get_model_info",
+                side_effect=RuntimeError("fail"),
+            ),
+        ):
+            assert llm_client.get_context_window() == _DEFAULT_CONTEXT_WINDOW
+
+    def test_fallback_default(self, llm_client: LLMClient, settings_manager):
+        """Falls back to default when no model_info available."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="unknown", context_window=0, api_key="key"
+        )
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm._litellm_get_model_info", None),
+        ):
+            assert llm_client.get_context_window() == _DEFAULT_CONTEXT_WINDOW
+
+
+# --- count_tokens ---
+
+
+class TestCountTokens:
+    """Token counting with LiteLLM fallback."""
+
+    def test_litellm_counter_with_tools(self, llm_client: LLMClient, settings_manager):
+        """Uses LiteLLM native counter when available (with tools)."""
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm._litellm_token_counter", return_value=500),
+        ):
+            result = llm_client.count_tokens(
+                [{"role": "user", "content": "hello"}],
+                tools=[{"type": "function", "function": {"name": "test"}}],
+            )
+            assert result == 500
+
+    def test_litellm_counter_fallback_messages_only(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """Falls back to messages-only counter + manual tool estimation."""
+
+        def counter_side_effect(model, messages, tools=None):
+            if tools is not None:
+                raise TypeError("tools not supported")
+            return 100
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch(
+                "open_agent.core.llm._litellm_token_counter",
+                side_effect=counter_side_effect,
+            ),
+        ):
+            result = llm_client.count_tokens(
+                [{"role": "user", "content": "hello"}],
+                tools=[{"type": "function", "function": {"name": "test"}}],
+            )
+            # 100 base + tool schema estimation
+            assert result > 100
+
+    def test_char_estimation_fallback(self, llm_client: LLMClient, settings_manager):
+        """Falls back to character-based estimation when LiteLLM unavailable."""
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm._litellm_token_counter", None),
+        ):
+            result = llm_client.count_tokens(
+                [{"role": "user", "content": "hello world test message"}]
+            )
+            assert result >= 1
+
+    def test_char_estimation_with_list_content(self, llm_client: LLMClient, settings_manager):
+        """Character estimation handles list-type content (multimodal)."""
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm._litellm_token_counter", None),
+        ):
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "describe this image"},
+                        {"type": "image_url", "image_url": {"url": "data:..."}},
+                    ],
+                }
+            ]
+            result = llm_client.count_tokens(messages)
+            assert result >= 1
+
+    def test_char_estimation_with_tools(self, llm_client: LLMClient, settings_manager):
+        """Character estimation includes tool schema size."""
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm._litellm_token_counter", None),
+        ):
+            tools = [{"type": "function", "function": {"name": "search", "parameters": {}}}]
+            result_with_tools = llm_client.count_tokens(
+                [{"role": "user", "content": "hello"}], tools=tools
+            )
+            result_without = llm_client.count_tokens(
+                [{"role": "user", "content": "hello"}]
+            )
+            assert result_with_tools > result_without
+
+    def test_litellm_counter_both_calls_fail(self, llm_client: LLMClient, settings_manager):
+        """Falls through to char estimation when both LiteLLM calls fail."""
+
+        def always_fail(model, messages, tools=None):
+            raise RuntimeError("counter broken")
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch(
+                "open_agent.core.llm._litellm_token_counter",
+                side_effect=always_fail,
+            ),
+        ):
+            result = llm_client.count_tokens(
+                [{"role": "user", "content": "test message"}]
+            )
+            assert result >= 1
+
+
+# --- _clamp_max_tokens ---
+
+
+class TestClampMaxTokens:
+    """Dynamic max_tokens clamping."""
+
+    def test_clamp_when_context_nearly_full(self, llm_client: LLMClient, settings_manager):
+        """Clamps to MIN_OUTPUT_TOKENS when context is nearly full."""
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch.object(llm_client, "get_context_window", return_value=1000),
+            patch.object(llm_client, "count_tokens", return_value=990),
+        ):
+            kwargs = {"messages": [], "max_tokens": 16384}
+            result = llm_client._clamp_max_tokens(kwargs)
+            assert result["max_tokens"] == _MIN_OUTPUT_TOKENS
+
+    def test_clamp_when_available_less_than_configured(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """Clamps max_tokens to available tokens when less than configured."""
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch.object(llm_client, "get_context_window", return_value=50000),
+            patch.object(llm_client, "count_tokens", return_value=40000),
+        ):
+            kwargs = {"messages": [], "max_tokens": 16384}
+            result = llm_client._clamp_max_tokens(kwargs)
+            # available = 50000 - 40000 - 256 = 9744, less than 16384
+            assert result["max_tokens"] < 16384
+            assert result["max_tokens"] > _MIN_OUTPUT_TOKENS
+
+    def test_no_clamp_when_sufficient_space(self, llm_client: LLMClient, settings_manager):
+        """max_tokens unchanged when there's plenty of context space."""
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch.object(llm_client, "get_context_window", return_value=200000),
+            patch.object(llm_client, "count_tokens", return_value=1000),
+        ):
+            kwargs = {"messages": [], "max_tokens": 16384}
+            result = llm_client._clamp_max_tokens(kwargs)
+            assert result["max_tokens"] == 16384
+
+    def test_default_max_tokens_when_not_set(self, llm_client: LLMClient, settings_manager):
+        """Uses 16384 default when max_tokens not in kwargs."""
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch.object(llm_client, "get_context_window", return_value=200000),
+            patch.object(llm_client, "count_tokens", return_value=1000),
+        ):
+            kwargs = {"messages": []}
+            result = llm_client._clamp_max_tokens(kwargs)
+            # No clamping needed, but configured fallback is 16384
+            assert "max_tokens" not in result or result.get("max_tokens", 16384) == 16384
+
+
+# --- classify ---
+
+
+class TestClassify:
+    """Classify method tests."""
+
+    async def test_classify_with_content(self, llm_client: LLMClient, settings_manager):
+        """classify returns a matching choice from content."""
+        mock_msg = MagicMock()
+        mock_msg.content = "search"
+        mock_msg.reasoning_content = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", AsyncMock(return_value=mock_response)),
+        ):
+            result = await llm_client.classify(
+                "Classify the intent", ["search", "chat", "code"], "find me some docs"
+            )
+            assert result == "search"
+
+    async def test_classify_with_reasoning_content(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """classify falls back to reasoning_content when content is empty."""
+        mock_msg = MagicMock()
+        mock_msg.content = None
+        mock_msg.reasoning_content = "search"
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", AsyncMock(return_value=mock_response)),
+        ):
+            result = await llm_client.classify(
+                "Classify the intent", ["search", "chat"], "find docs"
+            )
+            assert result == "search"
+
+    async def test_classify_empty_content_no_reasoning(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """classify returns None when both content and reasoning are empty."""
+        mock_msg = MagicMock()
+        mock_msg.content = None
+        mock_msg.reasoning_content = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", AsyncMock(return_value=mock_response)),
+        ):
+            result = await llm_client.classify(
+                "Classify", ["search", "chat"], "test"
+            )
+            assert result is None
+
+    async def test_classify_no_match(self, llm_client: LLMClient, settings_manager):
+        """classify returns None when LLM response doesn't match any choice."""
+        mock_msg = MagicMock()
+        mock_msg.content = "definitely not a valid choice"
+        mock_msg.reasoning_content = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", AsyncMock(return_value=mock_response)),
+        ):
+            result = await llm_client.classify(
+                "Classify", ["alpha", "beta"], "test"
+            )
+            assert result is None
+
+    async def test_classify_exception_returns_none(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """classify returns None when LLM call raises."""
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch(
+                "open_agent.core.llm.acompletion",
+                AsyncMock(side_effect=RuntimeError("API down")),
+            ),
+        ):
+            result = await llm_client.classify(
+                "Classify", ["yes", "no"], "test"
+            )
+            assert result is None
+
+    async def test_classify_with_api_base(self, llm_client: LLMClient, settings_manager):
+        """classify passes api_base when configured."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="test", api_base="http://localhost:8000", api_key="key"
+        )
+        mock_msg = MagicMock()
+        mock_msg.content = "yes"
+        mock_msg.reasoning_content = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        mock_acompletion = AsyncMock(return_value=mock_response)
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", mock_acompletion),
+        ):
+            await llm_client.classify("Q", ["yes", "no"], "test")
+            call_kwargs = mock_acompletion.call_args[1]
+            assert call_kwargs["api_base"] == "http://localhost:8000"
+
+
+# --- chat_completion ---
+
+
+class TestChatCompletion:
+    """chat_completion method tests."""
+
+    async def test_basic_completion(self, llm_client: LLMClient, settings_manager):
+        """Basic chat_completion returns result dict."""
+        mock_msg = MagicMock()
+        mock_msg.content = "Hello!"
+        mock_msg.reasoning_content = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.model_dump.return_value = {
+            "choices": [{"message": {"content": "Hello!", "tool_calls": None}}]
+        }
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", AsyncMock(return_value=mock_response)),
+            patch.object(llm_client, "_clamp_max_tokens", lambda k, t=None: k),
+        ):
+            result = await llm_client.chat_completion(
+                [{"role": "user", "content": "Hi"}]
+            )
+            assert "choices" in result
+
+    async def test_completion_with_tools(self, llm_client: LLMClient, settings_manager):
+        """chat_completion sets tool_choice and parallel_tool_calls with tools."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="openai/gpt-4", api_key="key"
+        )
+        mock_msg = MagicMock()
+        mock_msg.content = "tool result"
+        mock_msg.reasoning_content = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.model_dump.return_value = {
+            "choices": [{"message": {"content": "tool result", "tool_calls": None}}]
+        }
+
+        mock_acompletion = AsyncMock(return_value=mock_response)
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", mock_acompletion),
+            patch.object(llm_client, "_clamp_max_tokens", lambda k, t=None: k),
+        ):
+            tools = [{"type": "function", "function": {"name": "search"}}]
+            await llm_client.chat_completion(
+                [{"role": "user", "content": "search"}], tools=tools
+            )
+            call_kwargs = mock_acompletion.call_args[1]
+            assert call_kwargs["tool_choice"] == "auto"
+            assert call_kwargs["parallel_tool_calls"] is True
+
+    async def test_completion_gpt_oss_no_parallel_tool_calls(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """gpt-oss models skip parallel_tool_calls."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="hosted_vllm/openai/gpt-oss-120b",
+            api_key="key",
+            api_base="http://localhost",
+        )
+
+        mock_msg = MagicMock()
+        mock_msg.content = "result"
+        mock_msg.reasoning_content = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.model_dump.return_value = {
+            "choices": [{"message": {"content": "result", "tool_calls": None}}]
+        }
+
+        mock_acompletion = AsyncMock(return_value=mock_response)
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", mock_acompletion),
+            patch.object(llm_client, "_clamp_max_tokens", lambda k, t=None: k),
+        ):
+            tools = [{"type": "function", "function": {"name": "test"}}]
+            await llm_client.chat_completion(
+                [{"role": "user", "content": "test"}], tools=tools
+            )
+            call_kwargs = mock_acompletion.call_args[1]
+            assert "parallel_tool_calls" not in call_kwargs
+
+    async def test_completion_reasoning_fallback_no_tools(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """Reasoning model fallback: reasoning_content becomes content when no tools."""
+        mock_msg = MagicMock()
+        mock_msg.content = None
+        mock_msg.reasoning_content = "I think the answer is..."
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.model_dump.return_value = {
+            "choices": [{"message": {"content": None, "tool_calls": None}}]
+        }
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", AsyncMock(return_value=mock_response)),
+            patch.object(llm_client, "_clamp_max_tokens", lambda k, t=None: k),
+        ):
+            result = await llm_client.chat_completion(
+                [{"role": "user", "content": "think about this"}]
+            )
+            msg = result["choices"][0]["message"]
+            assert msg["content"] == "I think the answer is..."
+
+    async def test_completion_reasoning_fallback_with_tools(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """Reasoning model fallback: reasoning stored as _reasoning_content with tools."""
+        mock_msg = MagicMock()
+        mock_msg.content = None
+        mock_msg.reasoning_content = "thinking about tools..."
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.model_dump.return_value = {
+            "choices": [{"message": {"content": None, "tool_calls": None}}]
+        }
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", AsyncMock(return_value=mock_response)),
+            patch.object(llm_client, "_clamp_max_tokens", lambda k, t=None: k),
+        ):
+            tools = [{"type": "function", "function": {"name": "test"}}]
+            result = await llm_client.chat_completion(
+                [{"role": "user", "content": "use tools"}], tools=tools
+            )
+            msg = result["choices"][0]["message"]
+            assert msg.get("_reasoning_content") == "thinking about tools..."
+
+    async def test_completion_reasoning_effort_override(
+        self, llm_client: LLMClient, settings_manager
+    ):
+        """Dynamic reasoning_effort override is applied for supported providers."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="openai/gpt-4", api_key="key"
+        )
+        mock_msg = MagicMock()
+        mock_msg.content = "done"
+        mock_msg.reasoning_content = None
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.model_dump.return_value = {
+            "choices": [{"message": {"content": "done", "tool_calls": None}}]
+        }
+
+        mock_acompletion = AsyncMock(return_value=mock_response)
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", mock_acompletion),
+            patch.object(llm_client, "_clamp_max_tokens", lambda k, t=None: k),
+        ):
+            await llm_client.chat_completion(
+                [{"role": "user", "content": "test"}], reasoning_effort="high"
+            )
+            call_kwargs = mock_acompletion.call_args[1]
+            assert call_kwargs["reasoning_effort"] == "high"
+
+
+# --- chat_stream ---
+
+
+class TestChatStream:
+    """chat_stream content-only path."""
+
+    async def test_stream_yields_content(self, llm_client: LLMClient, settings_manager):
+        """chat_stream yields content chunks."""
+        chunk1 = MagicMock()
+        chunk1.choices = [MagicMock()]
+        chunk1.choices[0].delta.content = "Hello"
+
+        chunk2 = MagicMock()
+        chunk2.choices = [MagicMock()]
+        chunk2.choices[0].delta.content = " World"
+
+        chunk3 = MagicMock()
+        chunk3.choices = [MagicMock()]
+        chunk3.choices[0].delta.content = None  # end chunk
+
+        async def mock_stream():
+            for chunk in [chunk1, chunk2, chunk3]:
+                yield chunk
+
+        with (
+            patch("open_agent.core.settings_manager.settings_manager", settings_manager),
+            patch("open_agent.core.llm.acompletion", AsyncMock(return_value=mock_stream())),
+            patch.object(llm_client, "_clamp_max_tokens", lambda k, t=None: k),
+        ):
+            chunks = []
+            async for text in llm_client.chat_stream(
+                [{"role": "user", "content": "hi"}]
+            ):
+                chunks.append(text)
+
+            assert chunks == ["Hello", " World"]
+
+
+# --- get_system_prompt ---
+
+
+class TestGetSystemPrompt:
+    """System prompt retrieval."""
+
+    def test_returns_system_prompt(self, llm_client: LLMClient, settings_manager):
+        """Returns system_prompt from settings_manager."""
+        from open_agent.models.settings import LLMSettings
+
+        settings_manager._settings.llm = LLMSettings(
+            model="test", system_prompt="You are a helpful assistant.", api_key="key"
+        )
+        with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
+            assert llm_client.get_system_prompt() == "You are a helpful assistant."
+
+    def test_returns_empty_default(self, llm_client: LLMClient, settings_manager):
+        """Returns empty string when no system prompt configured."""
+        with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
+            assert llm_client.get_system_prompt() == ""

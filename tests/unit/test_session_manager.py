@@ -174,3 +174,193 @@ class TestSessionUpdate:
         """Updating a non-existent session returns None."""
         result = await session_manager.update_session("nonexistent-id", "새 제목")
         assert result is None
+
+    async def test_update_persists_to_db(self, session_manager: SessionManager):
+        """Title update persists to DB."""
+        session = await session_manager.create_session(title="Original")
+        await session_manager.update_session(session.id, "Updated Title")
+
+        session_manager._sessions.clear()
+        await session_manager.load_from_db()
+        reloaded = session_manager.get_session(session.id)
+        assert reloaded is not None
+        assert reloaded.title == "Updated Title"
+
+
+class TestSessionMessagesAdvanced:
+    """Advanced message handling tests for uncovered branches."""
+
+    async def test_save_messages_structured_content(self, session_manager: SessionManager):
+        """Structured (list) content is stored and retrieved correctly."""
+        session = await session_manager.create_session()
+        structured_content = [
+            {"type": "text", "text": "Describe this image"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ]
+        msgs = [
+            SessionMessage(role="user", content=structured_content),
+            SessionMessage(role="assistant", content="I see a cat."),
+        ]
+
+        result = await session_manager.save_messages(session.id, msgs)
+        assert result is not None
+        assert result.message_count == 2
+
+        loaded = await session_manager.get_messages(session.id)
+        assert loaded is not None
+        assert isinstance(loaded[0].content, list)
+        assert loaded[0].content[0]["type"] == "text"
+
+    async def test_save_messages_with_thinking_steps(self, session_manager: SessionManager):
+        """Messages with thinking_steps are stored in extra field."""
+        session = await session_manager.create_session()
+        msgs = [
+            SessionMessage(role="user", content="Think about this"),
+            SessionMessage(
+                role="assistant",
+                content="The answer is 42",
+                thinking_steps=[{"type": "thinking", "thinking": "Let me think..."}],
+            ),
+        ]
+
+        await session_manager.save_messages(session.id, msgs)
+        loaded = await session_manager.get_messages(session.id)
+        assert loaded[1].thinking_steps is not None
+        assert len(loaded[1].thinking_steps) == 1
+
+    async def test_save_messages_with_display_text(self, session_manager: SessionManager):
+        """Messages with display_text are stored and retrieved."""
+        session = await session_manager.create_session()
+        msgs = [
+            SessionMessage(role="user", content="test", display_text="Displayed text"),
+            SessionMessage(role="assistant", content="response"),
+        ]
+
+        await session_manager.save_messages(session.id, msgs)
+        loaded = await session_manager.get_messages(session.id)
+        assert loaded[0].display_text == "Displayed text"
+
+    async def test_save_messages_with_attached_files(self, session_manager: SessionManager):
+        """Messages with attached_files are stored and retrieved."""
+        session = await session_manager.create_session()
+        msgs = [
+            SessionMessage(
+                role="user",
+                content="check this file",
+                attached_files=[{"name": "report.pdf", "type": "application/pdf", "size": 1024}],
+            ),
+            SessionMessage(role="assistant", content="I see the file."),
+        ]
+
+        await session_manager.save_messages(session.id, msgs)
+        loaded = await session_manager.get_messages(session.id)
+        assert loaded[0].attached_files is not None
+        assert loaded[0].attached_files[0]["name"] == "report.pdf"
+
+    async def test_save_messages_preview_from_structured_content(
+        self, session_manager: SessionManager
+    ):
+        """Preview is extracted from structured content when last message has list content."""
+        session = await session_manager.create_session()
+        msgs = [
+            SessionMessage(role="user", content="hello"),
+            SessionMessage(
+                role="assistant",
+                content=[{"type": "text", "text": "Preview from structured"}],
+            ),
+        ]
+
+        result = await session_manager.save_messages(session.id, msgs)
+        assert result is not None
+        assert result.preview == "Preview from structured"
+
+    async def test_save_messages_empty_list_yields_empty_preview(
+        self, session_manager: SessionManager
+    ):
+        """Empty message list yields empty preview."""
+        session = await session_manager.create_session()
+        result = await session_manager.save_messages(session.id, [])
+        assert result is not None
+        assert result.preview == ""
+
+    async def test_auto_title_from_display_text(self, session_manager: SessionManager):
+        """Auto-title uses display_text when content is empty."""
+        session = await session_manager.create_session()
+        msgs = [
+            SessionMessage(role="user", content="", display_text="My displayed question"),
+            SessionMessage(role="assistant", content="Answer"),
+        ]
+
+        result = await session_manager.save_messages(session.id, msgs)
+        assert result is not None
+        assert "My displayed question" in result.title
+
+    async def test_auto_title_from_structured_content(self, session_manager: SessionManager):
+        """Auto-title extracts text from structured content."""
+        session = await session_manager.create_session()
+        msgs = [
+            SessionMessage(
+                role="user",
+                content=[{"type": "text", "text": "Structured question about AI"}],
+            ),
+            SessionMessage(role="assistant", content="Answer"),
+        ]
+
+        result = await session_manager.save_messages(session.id, msgs)
+        assert result is not None
+        assert "Structured question" in result.title
+
+    async def test_auto_title_from_attached_files(self, session_manager: SessionManager):
+        """Auto-title falls back to attached file names."""
+        session = await session_manager.create_session()
+        msgs = [
+            SessionMessage(
+                role="user",
+                content="",
+                attached_files=[{"name": "design.png"}, {"name": "spec.pdf"}],
+            ),
+            SessionMessage(role="assistant", content="I see the files."),
+        ]
+
+        result = await session_manager.save_messages(session.id, msgs)
+        assert result is not None
+        assert "design.png" in result.title or "spec.pdf" in result.title
+
+    async def test_auto_title_not_overwritten(self, session_manager: SessionManager):
+        """Custom title is not overwritten by auto-title logic."""
+        session = await session_manager.create_session(title="My Custom Title")
+        msgs = [
+            SessionMessage(role="user", content="Some question"),
+            SessionMessage(role="assistant", content="Some answer"),
+        ]
+
+        result = await session_manager.save_messages(session.id, msgs)
+        assert result is not None
+        assert result.title == "My Custom Title"
+
+    async def test_get_messages_json_backward_compat(self, session_manager: SessionManager):
+        """JSON-parseable string content that's a list is restored as list."""
+        session = await session_manager.create_session()
+        # Save a message with JSON-parseable list content
+        msgs = [
+            SessionMessage(role="user", content="normal text"),
+            SessionMessage(role="assistant", content="response"),
+        ]
+        await session_manager.save_messages(session.id, msgs)
+
+        loaded = await session_manager.get_messages(session.id)
+        assert loaded is not None
+        assert loaded[0].content == "normal text"
+
+    async def test_save_messages_long_preview_truncated(self, session_manager: SessionManager):
+        """Preview is truncated to 100 characters."""
+        session = await session_manager.create_session()
+        long_content = "A" * 200
+        msgs = [
+            SessionMessage(role="user", content="question"),
+            SessionMessage(role="assistant", content=long_content),
+        ]
+
+        result = await session_manager.save_messages(session.id, msgs)
+        assert result is not None
+        assert len(result.preview) == 100
