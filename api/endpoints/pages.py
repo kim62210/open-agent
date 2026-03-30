@@ -2,22 +2,26 @@ import mimetypes
 import os
 import zipfile
 from io import BytesIO
-from typing import Annotated, List, Optional, Tuple
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from pydantic import BaseModel
-
-from core.auth.dependencies import require_any, require_user
-
 from open_agent.core.page_manager import page_manager
-from open_agent.core.page_wrapper import is_allowed_extension, needs_wrapper, generate_wrapper, inject_storage_bridge
+from open_agent.core.page_wrapper import (
+    generate_wrapper,
+    inject_storage_bridge,
+    is_allowed_extension,
+    needs_wrapper,
+)
 from open_agent.models.page import (
     CreateBookmarkRequest,
     CreateFolderRequest,
     PageInfo,
     UpdatePageRequest,
 )
+from pydantic import BaseModel
+
+from core.auth.dependencies import require_any, require_user
 
 router = APIRouter()
 
@@ -26,13 +30,20 @@ router = APIRouter()
 
 
 @router.post("/folders", response_model=PageInfo)
-async def create_folder(req: CreateFolderRequest, current_user: Annotated[dict, Depends(require_user)]):
-    return await page_manager.create_folder(req.name, req.description, req.parent_id)
+async def create_folder(
+    req: CreateFolderRequest, current_user: Annotated[dict, Depends(require_user)]
+):
+    return await page_manager.create_folder(
+        req.name,
+        req.description,
+        req.parent_id,
+        owner_user_id=current_user["id"],
+    )
 
 
-@router.get("/breadcrumb/{page_id}", response_model=List[PageInfo])
+@router.get("/breadcrumb/{page_id}", response_model=list[PageInfo])
 async def get_breadcrumb(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
-    page = page_manager.get_page(page_id)
+    page = page_manager.get_page(page_id, owner_user_id=current_user["id"])
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
     return page_manager.get_breadcrumb(page_id)
@@ -42,12 +53,15 @@ async def get_breadcrumb(page_id: str, current_user: Annotated[dict, Depends(req
 
 
 @router.post("/bookmark", response_model=PageInfo)
-async def create_bookmark(req: CreateBookmarkRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def create_bookmark(
+    req: CreateBookmarkRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     return await page_manager.add_bookmark(
         name=req.name,
         url=req.url,
         description=req.description,
         parent_id=req.parent_id,
+        owner_user_id=current_user["id"],
     )
 
 
@@ -56,7 +70,7 @@ async def create_bookmark(req: CreateBookmarkRequest, current_user: Annotated[di
 
 @router.post("/check-frameable/{page_id}")
 async def check_frameable(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
-    page = page_manager.get_page(page_id)
+    page = page_manager.get_page(page_id, owner_user_id=current_user["id"])
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
     frameable = await page_manager.check_and_update_frameable(page_id)
@@ -73,32 +87,36 @@ async def deactivate_page(current_user: Annotated[dict, Depends(require_user)]):
     return {"status": "deactivated"}
 
 
-@router.get("/active/current", response_model=Optional[PageInfo])
+@router.get("/active/current", response_model=PageInfo | None)
 async def get_active_page(current_user: Annotated[dict, Depends(require_any)]):
-    return page_manager.get_active_page()
+    return page_manager.get_active_page(owner_user_id=current_user["id"])
 
 
 # --- Publish / Host ---
 
 
-@router.get("/published/list", response_model=List[PageInfo])
+@router.get("/published/list", response_model=list[PageInfo])
 async def list_published_pages(current_user: Annotated[dict, Depends(require_any)]):
-    return page_manager.get_published_pages()
+    return page_manager.get_published_pages(owner_user_id=current_user["id"])
 
 
 # --- Page endpoints ---
 
 
-@router.get("/", response_model=List[PageInfo])
-async def list_pages(current_user: Annotated[dict, Depends(require_any)], parent_id: Optional[str] = None):
+@router.get("/", response_model=list[PageInfo])
+async def list_pages(
+    current_user: Annotated[dict, Depends(require_any)], parent_id: str | None = None
+):
     if parent_id is not None:
-        return page_manager.get_children(parent_id if parent_id != "null" else None)
-    return page_manager.get_all()
+        return page_manager.get_children(
+            parent_id if parent_id != "null" else None, owner_user_id=current_user["id"]
+        )
+    return page_manager.get_all(owner_user_id=current_user["id"])
 
 
 @router.get("/{page_id}", response_model=PageInfo)
 async def get_page(page_id: str, current_user: Annotated[dict, Depends(require_any)]):
-    page = page_manager.get_page(page_id)
+    page = page_manager.get_page(page_id, owner_user_id=current_user["id"])
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
     return page
@@ -124,7 +142,9 @@ async def get_page_version(page_id: str, current_user: Annotated[dict, Depends(r
 
 
 @router.get("/{page_id}/content/{file_path:path}")
-async def get_bundle_file(page_id: str, file_path: str, current_user: Annotated[dict, Depends(require_any)]):
+async def get_bundle_file(
+    page_id: str, file_path: str, current_user: Annotated[dict, Depends(require_any)]
+):
     page = page_manager.get_page(page_id)
     resolved = page_manager.get_bundle_file_path(page_id, file_path)
     if not resolved:
@@ -168,10 +188,10 @@ async def get_page_content(page_id: str, current_user: Annotated[dict, Depends(r
 @router.post("/upload-bundle", response_model=PageInfo)
 async def upload_bundle(
     current_user: Annotated[dict, Depends(require_user)],
-    files: List[UploadFile] = File(...),
-    name: str = Form(...),
-    description: str = Form(""),
-    parent_id: Optional[str] = Form(None),
+    files: Annotated[list[UploadFile], File(...)],
+    name: Annotated[str, Form(...)],
+    description: Annotated[str, Form()] = "",
+    parent_id: Annotated[str | None, Form()] = None,
 ):
     if not files:
         raise HTTPException(status_code=400, detail="파일이 없습니다.")
@@ -203,14 +223,14 @@ async def upload_bundle(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-def _extract_zip(data: bytes) -> List[Tuple[str, bytes]]:
+def _extract_zip(data: bytes) -> list[tuple[str, bytes]]:
     """Extract ZIP, filter macOS artifacts, strip common prefix directory."""
     buf = BytesIO(data)
     if not zipfile.is_zipfile(buf):
         raise ValueError("유효한 ZIP 파일이 아닙니다.")
     buf.seek(0)
 
-    result: List[Tuple[str, bytes]] = []
+    result: list[tuple[str, bytes]] = []
     with zipfile.ZipFile(buf, "r") as zf:
         for info in zf.infolist():
             # Skip directories
@@ -240,16 +260,18 @@ def _extract_zip(data: bytes) -> List[Tuple[str, bytes]]:
 @router.post("/upload", response_model=PageInfo)
 async def upload_page(
     current_user: Annotated[dict, Depends(require_user)],
-    file: UploadFile = File(...),
-    name: str = Form(...),
-    description: str = Form(""),
-    parent_id: Optional[str] = Form(None),
+    file: Annotated[UploadFile, File(...)],
+    name: Annotated[str, Form(...)],
+    description: Annotated[str, Form()] = "",
+    parent_id: Annotated[str | None, Form()] = None,
 ):
     if not file.filename or not is_allowed_extension(file.filename):
         raise HTTPException(status_code=400, detail="지원하지 않는 파일 형식입니다.")
     try:
         data = await file.read()
-        return await page_manager.add_page(name, description, data, file.filename, parent_id=parent_id)
+        return await page_manager.add_page(
+            name, description, data, file.filename, parent_id=parent_id
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -258,19 +280,25 @@ class ImportPathRequest(BaseModel):
     path: str
     name: str
     description: str = ""
-    parent_id: Optional[str] = None
+    parent_id: str | None = None
 
 
 @router.post("/import", response_model=PageInfo)
-async def import_page_from_path(req: ImportPathRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def import_page_from_path(
+    req: ImportPathRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     try:
-        return await page_manager.add_page_from_path(req.name, req.description, req.path, parent_id=req.parent_id)
+        return await page_manager.add_page_from_path(
+            req.name, req.description, req.path, parent_id=req.parent_id
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.patch("/{page_id}", response_model=PageInfo)
-async def update_page(page_id: str, req: UpdatePageRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def update_page(
+    page_id: str, req: UpdatePageRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     # Distinguish "not provided" vs "explicitly null" for parent_id
     parent_id = req.parent_id if "parent_id" in req.model_fields_set else "__unset__"
     page = await page_manager.update_page(
@@ -306,11 +334,15 @@ async def activate_page(page_id: str, current_user: Annotated[dict, Depends(requ
 
 
 class PublishRequest(BaseModel):
-    password: Optional[str] = None
+    password: str | None = None
 
 
 @router.post("/{page_id}/publish", response_model=PageInfo)
-async def publish_page(page_id: str, current_user: Annotated[dict, Depends(require_user)], req: PublishRequest = PublishRequest()):
+async def publish_page(
+    page_id: str,
+    current_user: Annotated[dict, Depends(require_user)],
+    req: PublishRequest = PublishRequest(),
+):
     page = await page_manager.publish_page(page_id, True, password=req.password)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found or not publishable")
@@ -337,7 +369,9 @@ async def list_page_files(page_id: str, current_user: Annotated[dict, Depends(re
 
 
 @router.get("/{page_id}/files/{file_path:path}")
-async def read_page_file(page_id: str, file_path: str, current_user: Annotated[dict, Depends(require_any)]):
+async def read_page_file(
+    page_id: str, file_path: str, current_user: Annotated[dict, Depends(require_any)]
+):
     content = page_manager.read_page_file(page_id, file_path)
     if content is None:
         raise HTTPException(status_code=404, detail="File not found")
@@ -345,7 +379,9 @@ async def read_page_file(page_id: str, file_path: str, current_user: Annotated[d
 
 
 @router.put("/{page_id}/files/{file_path:path}")
-async def write_page_file(page_id: str, file_path: str, body: dict, current_user: Annotated[dict, Depends(require_user)]):
+async def write_page_file(
+    page_id: str, file_path: str, body: dict, current_user: Annotated[dict, Depends(require_user)]
+):
     content = body.get("content")
     if content is None:
         raise HTTPException(status_code=400, detail="content is required")
@@ -377,11 +413,15 @@ async def kv_get(page_id: str, key: str, current_user: Annotated[dict, Depends(r
     value = page_manager.kv_get(page_id, key)
     if value is None:
         raise HTTPException(status_code=404, detail="Key not found")
-    return JSONResponse({"key": key, "value": value}, headers={"Cache-Control": "no-cache, no-store"})
+    return JSONResponse(
+        {"key": key, "value": value}, headers={"Cache-Control": "no-cache, no-store"}
+    )
 
 
 @router.put("/{page_id}/kv/{key:path}")
-async def kv_set(page_id: str, key: str, req: KVSetRequest, current_user: Annotated[dict, Depends(require_user)]):
+async def kv_set(
+    page_id: str, key: str, req: KVSetRequest, current_user: Annotated[dict, Depends(require_user)]
+):
     if not page_manager.get_page(page_id):
         raise HTTPException(status_code=404, detail="Page not found")
     page_manager.kv_set(page_id, key, req.value)

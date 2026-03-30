@@ -10,6 +10,7 @@ class WorkspaceORM(Base):
     __tablename__ = "workspaces"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(256))
     path: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, default="")

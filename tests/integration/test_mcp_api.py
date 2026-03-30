@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-
 from open_agent.models.mcp import MCPServerConfig, MCPServerInfo
 
 
@@ -12,17 +11,49 @@ from open_agent.models.mcp import MCPServerConfig, MCPServerInfo
 async def mcp_client(_patch_db_factory, monkeypatch):
     """httpx.AsyncClient wired to MCP router with mocked mcp_manager."""
     import httpx
-    from httpx import ASGITransport
-
     from fastapi import FastAPI
-    from core.auth.dependencies import get_current_user
+    from httpx import ASGITransport
     from open_agent.api.endpoints import mcp as mcp_router
+
+    from core.auth.dependencies import get_current_user
 
     test_app = FastAPI()
     test_app.include_router(mcp_router.router, prefix="/api/mcp")
 
     async def _fake_current_user() -> dict:
-        return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "admin"}
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "testuser",
+            "role": "admin",
+        }
+
+    test_app.dependency_overrides[get_current_user] = _fake_current_user
+
+    transport = ASGITransport(app=test_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+
+@pytest.fixture()
+async def non_admin_mcp_client(_patch_db_factory):
+    import httpx
+    from fastapi import FastAPI
+    from httpx import ASGITransport
+    from open_agent.api.endpoints import mcp as mcp_router
+
+    from core.auth.dependencies import get_current_user
+
+    test_app = FastAPI()
+    test_app.include_router(mcp_router.router, prefix="/api/mcp")
+
+    async def _fake_current_user() -> dict:
+        return {
+            "id": "test-user-id",
+            "email": "user@example.com",
+            "username": "regularuser",
+            "role": "user",
+        }
 
     test_app.dependency_overrides[get_current_user] = _fake_current_user
 
@@ -90,6 +121,29 @@ class TestGetServer:
             mock_mm.get_server_status.side_effect = ValueError("not found")
             resp = await mcp_client.get("/api/mcp/servers/nonexistent")
         assert resp.status_code == 404
+
+    async def test_get_server_redacts_sensitive_config_fields(self, mcp_client: AsyncClient):
+        info = MCPServerInfo(
+            name="secure-server",
+            config=MCPServerConfig(
+                transport="streamable-http",
+                url="https://example.com/mcp",
+                env={"OPENAI_API_KEY": "super-secret-token"},
+                headers={"Authorization": "Bearer top-secret-value", "X-Trace": "safe"},
+                enabled=True,
+            ),
+            status="connected",
+        )
+        with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
+            mock_mm.get_server_status.return_value = info
+            mock_mm.get_tools_for_server = AsyncMock(return_value=[])
+            resp = await mcp_client.get("/api/mcp/servers/secure-server")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["config"]["env"] == {"OPENAI_API_KEY": "***"}
+        assert data["config"]["headers"]["Authorization"] != "Bearer top-secret-value"
+        assert data["config"]["headers"]["X-Trace"] == "safe"
 
 
 class TestAddServer:
@@ -222,7 +276,11 @@ class TestUpdateServer:
         """Updates server config."""
         info = _make_server_info()
         config_mock = MagicMock()
-        config_mock.model_dump.return_value = {"transport": "stdio", "command": "echo", "enabled": True}
+        config_mock.model_dump.return_value = {
+            "transport": "stdio",
+            "command": "echo",
+            "enabled": True,
+        }
         config_mock.enabled = True
         configs = {"test-server": config_mock}
         with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
@@ -251,7 +309,11 @@ class TestUpdateServer:
         """Disabling a server disconnects it."""
         info = _make_server_info(status="disconnected")
         config_mock = MagicMock()
-        config_mock.model_dump.return_value = {"transport": "stdio", "command": "echo", "enabled": True}
+        config_mock.model_dump.return_value = {
+            "transport": "stdio",
+            "command": "echo",
+            "enabled": True,
+        }
         disabled_config = MagicMock()
         disabled_config.enabled = False
         configs = {"test-server": config_mock}
@@ -282,13 +344,22 @@ class TestUpdateConfig:
             mock_mm.remove_server_config = AsyncMock()
             mock_mm.add_server_config = AsyncMock()
             mock_mm.reload_config = AsyncMock()
-            mock_mm.get_raw_config.return_value = {"mcpServers": {"new-server": {"transport": "stdio", "command": "echo"}}}
+            mock_mm.get_raw_config.return_value = {
+                "mcpServers": {"new-server": {"transport": "stdio", "command": "echo"}}
+            }
             resp = await mcp_client.put(
                 "/api/mcp/config",
                 json={"mcpServers": {"new-server": {"transport": "stdio", "command": "echo"}}},
             )
         assert resp.status_code == 200
         assert "mcpServers" in resp.json()
+
+    async def test_non_admin_cannot_update_config(self, non_admin_mcp_client: AsyncClient):
+        resp = await non_admin_mcp_client.put(
+            "/api/mcp/config",
+            json={"mcpServers": {}},
+        )
+        assert resp.status_code == 403
 
 
 class TestConnectDisconnectExtended:
@@ -315,7 +386,10 @@ class TestListServerTools:
     async def test_list_server_tools(self, mcp_client: AsyncClient):
         """Returns tools from a specific server."""
         from open_agent.models.mcp import MCPToolInfo
-        tool = MCPToolInfo(name="read_file", description="Read a file", input_schema={}, server_name="test-server")
+
+        tool = MCPToolInfo(
+            name="read_file", description="Read a file", input_schema={}, server_name="test-server"
+        )
         with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
             mock_mm._configs = {"test-server": MagicMock()}
             mock_mm.get_tools_for_server = AsyncMock(return_value=[tool])
@@ -339,7 +413,10 @@ class TestListAllToolsExtended:
     async def test_list_all_tools_with_connections(self, mcp_client: AsyncClient):
         """Returns tools from all connected servers."""
         from open_agent.models.mcp import MCPToolInfo
-        tool = MCPToolInfo(name="run_query", description="Run SQL query", input_schema={}, server_name="db-server")
+
+        tool = MCPToolInfo(
+            name="run_query", description="Run SQL query", input_schema={}, server_name="db-server"
+        )
         with patch("open_agent.api.endpoints.mcp.mcp_manager") as mock_mm:
             mock_mm._connections = {"db-server": MagicMock()}
             mock_mm.get_tools_for_server = AsyncMock(return_value=[tool])

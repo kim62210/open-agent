@@ -2,7 +2,7 @@
 
 import hashlib
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,7 +43,7 @@ class AuthService:
             if user_count == 0:
                 role = "admin"
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         from core.db.models.user import UserORM
 
         user = UserORM(
@@ -88,7 +88,7 @@ class AuthService:
         refresh_token_str, token_id = create_refresh_token(user.id)
 
         # Persist refresh token
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         from core.db.models.user import RefreshTokenORM
 
         refresh_orm = RefreshTokenORM(
@@ -111,6 +111,8 @@ class AuthService:
     async def refresh_token(self, refresh_token_str: str) -> dict:
         """Exchange a valid refresh token for a new access token."""
         import jwt
+
+        from core.db.models.user import RefreshTokenORM
 
         try:
             payload = decode_token(refresh_token_str)
@@ -141,11 +143,25 @@ class AuthService:
         access_token = create_access_token(
             data={"sub": user.id, "email": user.email, "role": user.role}
         )
+        new_refresh_token_str, new_token_id = create_refresh_token(user.id)
+
+        token_orm.is_revoked = True
+
+        now = datetime.now(UTC).isoformat()
+        refresh_orm = RefreshTokenORM(
+            id=new_token_id,
+            user_id=user.id,
+            token_hash=hashlib.sha256(new_refresh_token_str.encode()).hexdigest(),
+            created_at=now,
+            is_revoked=False,
+        )
+        await self.token_repo.create(refresh_orm)
+        await self.session.commit()
 
         logger.info("token_refreshed", user_id=user.id)
         return {
             "access_token": access_token,
-            "refresh_token": refresh_token_str,
+            "refresh_token": new_refresh_token_str,
             "token_type": "bearer",
         }
 
@@ -163,7 +179,7 @@ class AuthService:
         raw_key = f"oa-{secrets.token_urlsafe(32)}"
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         key_prefix = raw_key[:12]
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         from core.db.models.user import APIKeyORM
 

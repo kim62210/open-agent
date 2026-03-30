@@ -1,12 +1,12 @@
 """FastAPI auth dependencies for route protection."""
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 import jwt as pyjwt
 import structlog
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from sqlalchemy import select
 
@@ -19,6 +19,7 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 async def get_current_user(
+    request: Request,
     token: Annotated[str | None, Depends(oauth2_scheme)] = None,
     api_key: Annotated[str | None, Depends(api_key_header)] = None,
 ) -> dict:
@@ -28,9 +29,13 @@ async def get_current_user(
     Raises 401 if no valid credentials found.
     """
     if token:
-        return await _validate_jwt(token)
+        user = await _validate_jwt(token)
+        request.state.user = user
+        return user
     if api_key:
-        return await _validate_api_key(api_key)
+        user = await _validate_api_key(api_key)
+        request.state.user = user
+        return user
     raise HTTPException(status_code=401, detail="Authentication required")
 
 
@@ -77,7 +82,7 @@ async def _validate_api_key(key: str) -> dict:
         user = await session.get(UserORM, api_key_orm.user_id)
         if not user or not user.is_active:
             raise HTTPException(status_code=401, detail="User not found or inactive")
-        api_key_orm.last_used_at = datetime.now(timezone.utc).isoformat()
+        api_key_orm.last_used_at = datetime.now(UTC).isoformat()
         await session.commit()
         return {
             "id": user.id,
@@ -93,9 +98,7 @@ class RoleChecker:
     def __init__(self, allowed_roles: list[str]) -> None:
         self.allowed_roles = allowed_roles
 
-    async def __call__(
-        self, current_user: Annotated[dict, Depends(get_current_user)]
-    ) -> dict:
+    async def __call__(self, current_user: Annotated[dict, Depends(get_current_user)]) -> dict:
         if current_user["role"] not in self.allowed_roles:
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return current_user

@@ -11,6 +11,7 @@ class SessionORM(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(256), default="New Session")
     created_at: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[str] = mapped_column(String(64))

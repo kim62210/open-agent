@@ -1,10 +1,8 @@
 """MemoryManager unit tests — async DB-backed."""
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
-
-import pytest
 
 from open_agent.core.memory_manager import MemoryManager
 from open_agent.models.memory import MemoryItem
@@ -87,15 +85,28 @@ class TestMemoryGet:
 
     async def test_get_all_ordered_by_created_at(self, memory_manager: MemoryManager):
         """get_all returns memories ordered by created_at descending."""
-        m1 = await memory_manager.create("첫 번째")
-        m2 = await memory_manager.create("두 번째")
-        m3 = await memory_manager.create("세 번째")
+        m1 = await memory_manager.create("첫 번째", owner_user_id="user-1")
+        m2 = await memory_manager.create("두 번째", owner_user_id="user-1")
+        m3 = await memory_manager.create("세 번째", owner_user_id="user-1")
 
-        result = memory_manager.get_all()
+        result = memory_manager.get_all(owner_user_id="user-1")
         assert len(result) == 3
         assert result[0].id == m3.id
         assert result[1].id == m2.id
         assert result[2].id == m1.id
+
+    async def test_get_all_filters_by_owner(self, memory_manager: MemoryManager):
+        owned = await memory_manager.create("내 메모", owner_user_id="user-1")
+        await memory_manager.create("남의 메모", owner_user_id="user-2")
+
+        result = memory_manager.get_all(owner_user_id="user-1")
+
+        assert [memory.id for memory in result] == [owned.id]
+
+    async def test_get_denies_other_owner(self, memory_manager: MemoryManager):
+        owned = await memory_manager.create("비공개 메모", owner_user_id="user-1")
+
+        assert memory_manager.get(owned.id, owner_user_id="user-2") is None
 
 
 class TestMemoryUpdate:
@@ -203,9 +214,7 @@ class TestMemoryContradiction:
 
         detect_contradictions checks overlap > 0.6 && overlap < 0.9.
         """
-        existing = await memory_manager.create(
-            "user prefers Python 3.12 for backend development"
-        )
+        existing = await memory_manager.create("user prefers Python 3.12 for backend development")
         result = memory_manager.detect_contradictions(
             "user prefers Python 3.13 for backend development", 0.9
         )
@@ -215,9 +224,7 @@ class TestMemoryContradiction:
     async def test_no_contradiction_different_topic(self, memory_manager: MemoryManager):
         """Different topics yield no contradiction."""
         await memory_manager.create("사용자는 Python 개발자이다")
-        result = memory_manager.detect_contradictions(
-            "프로젝트에서 React를 사용한다", 0.8
-        )
+        result = memory_manager.detect_contradictions("프로젝트에서 React를 사용한다", 0.8)
 
         assert result is None
 
@@ -235,7 +242,9 @@ class TestMemoryDecay:
         mem = await memory_manager.create("핀 메모리", confidence=0.5)
         await memory_manager.update(mem.id, is_pinned=True)
 
-        pruned = await memory_manager.apply_decay(decay_days=0, decay_amount=1.0, prune_threshold=0.9)
+        pruned = await memory_manager.apply_decay(
+            decay_days=0, decay_amount=1.0, prune_threshold=0.9
+        )
         assert pruned == 0
         assert memory_manager.get(mem.id) is not None
 
@@ -243,7 +252,7 @@ class TestMemoryDecay:
         """Memories decayed below threshold are pruned."""
         mem = await memory_manager.create("old memory", confidence=0.35)
         # Force updated_at to be old enough for decay
-        old_date = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
+        old_date = (datetime.now(UTC) - timedelta(days=100)).isoformat()
         memory_manager._memories[mem.id] = MemoryItem(
             **{**mem.model_dump(), "updated_at": old_date}
         )
@@ -257,7 +266,7 @@ class TestMemoryDecay:
     async def test_decay_reduces_confidence(self, memory_manager: MemoryManager):
         """Memories old enough are decayed but not pruned if above threshold."""
         mem = await memory_manager.create("decaying memory", confidence=0.8)
-        old_date = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
+        old_date = (datetime.now(UTC) - timedelta(days=100)).isoformat()
         memory_manager._memories[mem.id] = MemoryItem(
             **{**mem.model_dump(), "updated_at": old_date}
         )
@@ -354,17 +363,13 @@ class TestBuildMemoryPrompt:
         """Returns empty string when memory is disabled."""
         await settings_manager.update_memory(enabled=False)
         await memory_manager.create("some memory")
-        with patch(
-            "open_agent.core.settings_manager.settings_manager", settings_manager
-        ):
+        with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = memory_manager.build_memory_prompt("test")
             assert result == ""
 
     async def test_empty_when_no_memories(self, memory_manager: MemoryManager, settings_manager):
         """Returns empty string when no memories exist."""
-        with patch(
-            "open_agent.core.settings_manager.settings_manager", settings_manager
-        ):
+        with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = memory_manager.build_memory_prompt("test")
             assert result == ""
 
@@ -373,36 +378,26 @@ class TestBuildMemoryPrompt:
     ):
         """Builds a prompt section containing memory content."""
         await memory_manager.create("user likes Python", category="preference", confidence=0.9)
-        with patch(
-            "open_agent.core.settings_manager.settings_manager", settings_manager
-        ):
+        with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = memory_manager.build_memory_prompt("Python help")
             assert "Long-term Memory" in result
             assert "Python" in result
 
-    async def test_filters_low_relevance(
-        self, memory_manager: MemoryManager, settings_manager
-    ):
+    async def test_filters_low_relevance(self, memory_manager: MemoryManager, settings_manager):
         """Low-relevance memories are filtered out when user_input is provided."""
         await memory_manager.create(
             "completely unrelated topic about gardening vegetables", confidence=0.5
         )
-        with patch(
-            "open_agent.core.settings_manager.settings_manager", settings_manager
-        ):
+        with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = memory_manager.build_memory_prompt("quantum physics research")
             # May or may not be empty depending on scoring, but tests the filtering path
             assert isinstance(result, str)
 
-    async def test_prompt_without_user_input(
-        self, memory_manager: MemoryManager, settings_manager
-    ):
+    async def test_prompt_without_user_input(self, memory_manager: MemoryManager, settings_manager):
         """Without user_input, all memories are included (sorted by confidence)."""
         await memory_manager.create("memory A", confidence=0.9)
         await memory_manager.create("memory B", confidence=0.6)
-        with patch(
-            "open_agent.core.settings_manager.settings_manager", settings_manager
-        ):
+        with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = memory_manager.build_memory_prompt()
             assert "memory A" in result
             assert "memory B" in result
@@ -417,9 +412,7 @@ class TestContradictionAdvanced:
     async def test_near_identical_not_flagged(self, memory_manager: MemoryManager):
         """Overlap >= 0.9 is not a contradiction (considered same memory)."""
         await memory_manager.create("user prefers Python for backend")
-        result = memory_manager.detect_contradictions(
-            "user prefers Python for backend", 0.8
-        )
+        result = memory_manager.detect_contradictions("user prefers Python for backend", 0.8)
         assert result is None
 
     async def test_empty_new_content(self, memory_manager: MemoryManager):
@@ -473,7 +466,6 @@ class TestMemoryEviction:
         """Returns None when no memories exist."""
         result = await memory_manager._evict_oldest()
         assert result is None
-
 
 
 # --- Compression ---
@@ -555,9 +547,7 @@ class TestMemoryCompression:
 class TestExtractAndSave:
     """Memory extraction from conversation tests."""
 
-    async def test_extraction_disabled(
-        self, memory_manager: MemoryManager, settings_manager
-    ):
+    async def test_extraction_disabled(self, memory_manager: MemoryManager, settings_manager):
         """Returns empty list when memory is disabled."""
         await settings_manager.update_memory(enabled=False)
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
@@ -578,10 +568,16 @@ class TestExtractAndSave:
         self, memory_manager: MemoryManager, settings_manager, mock_llm
     ):
         """Extracts and creates valid memories from LLM response."""
-        extracted = json.dumps([
-            {"content": "User prefers Python", "category": "preference", "confidence": 0.9},
-            {"content": "User works on FastAPI project", "category": "context", "confidence": 0.8},
-        ])
+        extracted = json.dumps(
+            [
+                {"content": "User prefers Python", "category": "preference", "confidence": 0.9},
+                {
+                    "content": "User works on FastAPI project",
+                    "category": "context",
+                    "confidence": 0.8,
+                },
+            ]
+        )
         mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
@@ -594,9 +590,11 @@ class TestExtractAndSave:
         self, memory_manager: MemoryManager, settings_manager, mock_llm
     ):
         """Memories below MIN_CONFIDENCE (0.5) are skipped."""
-        extracted = json.dumps([
-            {"content": "Low confidence memory", "category": "fact", "confidence": 0.3},
-        ])
+        extracted = json.dumps(
+            [
+                {"content": "Low confidence memory", "category": "fact", "confidence": 0.3},
+            ]
+        )
         mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
@@ -607,10 +605,12 @@ class TestExtractAndSave:
         self, memory_manager: MemoryManager, settings_manager, mock_llm
     ):
         """Items with empty content are skipped."""
-        extracted = json.dumps([
-            {"content": "", "category": "fact", "confidence": 0.9},
-            {"content": "  ", "category": "fact", "confidence": 0.9},
-        ])
+        extracted = json.dumps(
+            [
+                {"content": "", "category": "fact", "confidence": 0.9},
+                {"content": "  ", "category": "fact", "confidence": 0.9},
+            ]
+        )
         mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
@@ -621,9 +621,11 @@ class TestExtractAndSave:
         self, memory_manager: MemoryManager, settings_manager, mock_llm
     ):
         """Invalid category defaults to 'fact'."""
-        extracted = json.dumps([
-            {"content": "Valid memory", "category": "invalid_cat", "confidence": 0.8},
-        ])
+        extracted = json.dumps(
+            [
+                {"content": "Valid memory", "category": "invalid_cat", "confidence": 0.8},
+            ]
+        )
         mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
@@ -635,9 +637,11 @@ class TestExtractAndSave:
         self, memory_manager: MemoryManager, settings_manager, mock_llm
     ):
         """Invalid confidence value defaults to 0.7."""
-        extracted = json.dumps([
-            {"content": "Memory with bad confidence", "category": "fact", "confidence": "bad"},
-        ])
+        extracted = json.dumps(
+            [
+                {"content": "Memory with bad confidence", "category": "fact", "confidence": "bad"},
+            ]
+        )
         mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
@@ -686,13 +690,15 @@ class TestExtractAndSave:
             confidence=0.6,
         )
 
-        extracted = json.dumps([
-            {
-                "content": "user prefers Python 3.13 for backend development",
-                "category": "fact",
-                "confidence": 0.9,
-            }
-        ])
+        extracted = json.dumps(
+            [
+                {
+                    "content": "user prefers Python 3.13 for backend development",
+                    "category": "fact",
+                    "confidence": 0.9,
+                }
+            ]
+        )
         mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
@@ -709,13 +715,15 @@ class TestExtractAndSave:
             confidence=0.95,
         )
 
-        extracted = json.dumps([
-            {
-                "content": "user prefers Python 3.13 for backend development",
-                "category": "fact",
-                "confidence": 0.6,
-            }
-        ])
+        extracted = json.dumps(
+            [
+                {
+                    "content": "user prefers Python 3.13 for backend development",
+                    "category": "fact",
+                    "confidence": 0.6,
+                }
+            ]
+        )
         mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
@@ -743,15 +751,15 @@ class TestBatchExtraction:
         self, memory_manager: MemoryManager, settings_manager, mock_llm
     ):
         """Meaningful turns are combined and extracted."""
-        extracted = json.dumps([
-            {"content": "batch memory", "category": "fact", "confidence": 0.8}
-        ])
+        extracted = json.dumps([{"content": "batch memory", "category": "fact", "confidence": 0.8}])
         mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
-            result = await memory_manager.extract_and_save_batch([
-                ("I prefer Python for all my projects", "Python is great for that!"),
-            ])
+            result = await memory_manager.extract_and_save_batch(
+                [
+                    ("I prefer Python for all my projects", "Python is great for that!"),
+                ]
+            )
             assert len(result) == 1
             assert result[0].content == "batch memory"
 
@@ -762,9 +770,11 @@ class TestBatchExtraction:
         mock_llm.side_effect = RuntimeError("batch fail")
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
-            result = await memory_manager.extract_and_save_batch([
-                ("Long enough message for extraction", "Response message also long enough"),
-            ])
+            result = await memory_manager.extract_and_save_batch(
+                [
+                    ("Long enough message for extraction", "Response message also long enough"),
+                ]
+            )
             assert result == []
 
 
@@ -774,28 +784,24 @@ class TestBatchExtraction:
 class TestSessionSummary:
     """Session summary generation tests."""
 
-    async def test_too_few_user_messages(
-        self, memory_manager: MemoryManager, settings_manager
-    ):
+    async def test_too_few_user_messages(self, memory_manager: MemoryManager, settings_manager):
         """Returns None when fewer than 2 user messages."""
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.generate_session_summary(
-                "session-1", "Test Session",
-                [{"role": "user", "content": "hello"}]
+                "session-1", "Test Session", [{"role": "user", "content": "hello"}]
             )
             assert result is None
 
-    async def test_single_user_message(
-        self, memory_manager: MemoryManager, settings_manager
-    ):
+    async def test_single_user_message(self, memory_manager: MemoryManager, settings_manager):
         """Returns None when only 1 user message exists."""
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             result = await memory_manager.generate_session_summary(
-                "session-1", "Test Session",
+                "session-1",
+                "Test Session",
                 [
                     {"role": "user", "content": "hello"},
                     {"role": "assistant", "content": "hi there"},
-                ]
+                ],
             )
             assert result is None
 
@@ -806,19 +812,18 @@ class TestSessionSummary:
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):
             # 2 user messages but content is not str (list) and empty str content
             result = await memory_manager.generate_session_summary(
-                "session-1", "Test Session",
+                "session-1",
+                "Test Session",
                 [
                     {"role": "user", "content": ["not a string"]},
                     {"role": "user", "content": ["also not a string"]},
-                ]
+                ],
             )
             # conversation parts filter requires isinstance(content, str) and content truthy
             # so conversation will be empty -> returns None
             assert result is None
 
-    async def test_summary_generated(
-        self, memory_manager: MemoryManager, settings_manager
-    ):
+    async def test_summary_generated(self, memory_manager: MemoryManager, settings_manager):
         """Summary is generated when enough user messages exist."""
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
@@ -839,9 +844,7 @@ class TestSessionSummary:
             assert result is not None
             assert "Python" in result or "FastAPI" in result
 
-    async def test_summary_llm_failure(
-        self, memory_manager: MemoryManager, settings_manager
-    ):
+    async def test_summary_llm_failure(self, memory_manager: MemoryManager, settings_manager):
         """Returns None when LLM call fails."""
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
@@ -855,14 +858,10 @@ class TestSessionSummary:
                 {"role": "assistant", "content": "response 1"},
                 {"role": "user", "content": "msg 2"},
             ]
-            result = await memory_manager.generate_session_summary(
-                "session-1", "Test", messages
-            )
+            result = await memory_manager.generate_session_summary("session-1", "Test", messages)
             assert result is None
 
-    async def test_summary_empty_response(
-        self, memory_manager: MemoryManager, settings_manager
-    ):
+    async def test_summary_empty_response(self, memory_manager: MemoryManager, settings_manager):
         """Returns None when LLM returns empty response."""
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
@@ -876,9 +875,7 @@ class TestSessionSummary:
                 {"role": "assistant", "content": "response 1"},
                 {"role": "user", "content": "msg 2"},
             ]
-            result = await memory_manager.generate_session_summary(
-                "session-1", "Test", messages
-            )
+            result = await memory_manager.generate_session_summary("session-1", "Test", messages)
             assert result is None
 
     async def test_summary_filters_non_user_assistant_roles(
@@ -899,9 +896,7 @@ class TestSessionSummary:
                 {"role": "tool", "content": "tool output"},
                 {"role": "user", "content": "second message"},
             ]
-            result = await memory_manager.generate_session_summary(
-                "session-1", "Test", messages
-            )
+            result = await memory_manager.generate_session_summary("session-1", "Test", messages)
             assert result is not None
 
 
@@ -923,9 +918,7 @@ class TestBuildSessionSummaryPrompt:
             {"session_id": "current", "title": "Current", "summary": "active session"},
         ]
         with patch.object(memory_manager, "_load_summaries", AsyncMock(return_value=summaries)):
-            result = await memory_manager.build_session_summary_prompt(
-                current_session_id="current"
-            )
+            result = await memory_manager.build_session_summary_prompt(current_session_id="current")
             assert result == ""
 
     async def test_returns_recent_without_user_input(self, memory_manager: MemoryManager):
@@ -944,7 +937,11 @@ class TestBuildSessionSummaryPrompt:
     async def test_filters_by_relevance_with_user_input(self, memory_manager: MemoryManager):
         """With user_input, only relevant summaries are included."""
         summaries = [
-            {"session_id": "s1", "title": "Python", "summary": "Python development tools and setup"},
+            {
+                "session_id": "s1",
+                "title": "Python",
+                "summary": "Python development tools and setup",
+            },
             {"session_id": "s2", "title": "Cooking", "summary": "Recipe for pasta carbonara"},
         ]
         with patch.object(memory_manager, "_load_summaries", AsyncMock(return_value=summaries)):
@@ -990,7 +987,7 @@ class TestBuildMemoryPromptTokenLimit:
             result = memory_manager.build_memory_prompt()
             assert "Long-term Memory" in result
             # The number of memory items should be less than 20 due to truncation
-            memory_lines = [l for l in result.split("\n") if l.startswith("- [")]
+            memory_lines = [line for line in result.split("\n") if line.startswith("- [")]
             assert memory_lines  # at least one line
             assert len(memory_lines) < 20
 
@@ -1013,17 +1010,34 @@ class TestCompressionSuccess:
         all_ids = [m.id for m in mems]
 
         # Build a valid compression response that merges first 2 and keeps rest
-        compressed = json.dumps([
-            {
-                "source_ids": [all_ids[0], all_ids[1]],
-                "content": "merged memory 0 and 1",
-                "category": "fact",
-                "confidence": 0.8,
-            },
-            {"source_ids": [all_ids[2]], "content": mems[2].content, "category": "fact", "confidence": 0.7},
-            {"source_ids": [all_ids[3]], "content": mems[3].content, "category": "fact", "confidence": 0.7},
-            {"source_ids": [all_ids[4]], "content": mems[4].content, "category": "fact", "confidence": 0.7},
-        ])
+        compressed = json.dumps(
+            [
+                {
+                    "source_ids": [all_ids[0], all_ids[1]],
+                    "content": "merged memory 0 and 1",
+                    "category": "fact",
+                    "confidence": 0.8,
+                },
+                {
+                    "source_ids": [all_ids[2]],
+                    "content": mems[2].content,
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+                {
+                    "source_ids": [all_ids[3]],
+                    "content": mems[3].content,
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+                {
+                    "source_ids": [all_ids[4]],
+                    "content": mems[4].content,
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+            ]
+        )
 
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
@@ -1049,12 +1063,34 @@ class TestCompressionSuccess:
         all_ids = [m.id for m in mems]
 
         # Duplicate source_id
-        compressed = json.dumps([
-            {"source_ids": [all_ids[0], all_ids[1]], "content": "merged", "category": "fact", "confidence": 0.8},
-            {"source_ids": [all_ids[1], all_ids[2]], "content": "bad merge", "category": "fact", "confidence": 0.7},
-            {"source_ids": [all_ids[3]], "content": "single", "category": "fact", "confidence": 0.7},
-            {"source_ids": [all_ids[4]], "content": "single", "category": "fact", "confidence": 0.7},
-        ])
+        compressed = json.dumps(
+            [
+                {
+                    "source_ids": [all_ids[0], all_ids[1]],
+                    "content": "merged",
+                    "category": "fact",
+                    "confidence": 0.8,
+                },
+                {
+                    "source_ids": [all_ids[1], all_ids[2]],
+                    "content": "bad merge",
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+                {
+                    "source_ids": [all_ids[3]],
+                    "content": "single",
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+                {
+                    "source_ids": [all_ids[4]],
+                    "content": "single",
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+            ]
+        )
 
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
@@ -1078,12 +1114,34 @@ class TestCompressionSuccess:
         all_ids = [m.id for m in mems]
 
         # Missing one ID, extra fake ID
-        compressed = json.dumps([
-            {"source_ids": [all_ids[0]], "content": "single", "category": "fact", "confidence": 0.7},
-            {"source_ids": [all_ids[1]], "content": "single", "category": "fact", "confidence": 0.7},
-            {"source_ids": [all_ids[2]], "content": "single", "category": "fact", "confidence": 0.7},
-            {"source_ids": ["fake_id"], "content": "bad", "category": "fact", "confidence": 0.7},
-        ])
+        compressed = json.dumps(
+            [
+                {
+                    "source_ids": [all_ids[0]],
+                    "content": "single",
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+                {
+                    "source_ids": [all_ids[1]],
+                    "content": "single",
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+                {
+                    "source_ids": [all_ids[2]],
+                    "content": "single",
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+                {
+                    "source_ids": ["fake_id"],
+                    "content": "bad",
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+            ]
+        )
 
         with (
             patch("open_agent.core.settings_manager.settings_manager", settings_manager),
@@ -1106,12 +1164,34 @@ class TestCompressionSuccess:
 
         all_ids = [m.id for m in mems]
 
-        inner = json.dumps([
-            {"source_ids": [all_ids[0], all_ids[1]], "content": "merged", "category": "fact", "confidence": 0.8},
-            {"source_ids": [all_ids[2]], "content": mems[2].content, "category": "fact", "confidence": 0.7},
-            {"source_ids": [all_ids[3]], "content": mems[3].content, "category": "fact", "confidence": 0.7},
-            {"source_ids": [all_ids[4]], "content": mems[4].content, "category": "fact", "confidence": 0.7},
-        ])
+        inner = json.dumps(
+            [
+                {
+                    "source_ids": [all_ids[0], all_ids[1]],
+                    "content": "merged",
+                    "category": "fact",
+                    "confidence": 0.8,
+                },
+                {
+                    "source_ids": [all_ids[2]],
+                    "content": mems[2].content,
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+                {
+                    "source_ids": [all_ids[3]],
+                    "content": mems[3].content,
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+                {
+                    "source_ids": [all_ids[4]],
+                    "content": mems[4].content,
+                    "category": "fact",
+                    "confidence": 0.7,
+                },
+            ]
+        )
         fenced = f"```json\n{inner}\n```"
 
         with (
@@ -1142,9 +1222,9 @@ class TestCapacityEviction:
         await memory_manager.create("old memory 2", confidence=0.8)
         await memory_manager.create("old memory 3", confidence=0.8)
 
-        extracted = json.dumps([
-            {"content": "new memory from extraction", "category": "fact", "confidence": 0.9}
-        ])
+        extracted = json.dumps(
+            [{"content": "new memory from extraction", "category": "fact", "confidence": 0.9}]
+        )
         mock_llm.return_value = extracted
 
         with patch("open_agent.core.settings_manager.settings_manager", settings_manager):

@@ -67,9 +67,15 @@ class TestToolConstants:
 
     def test_all_tool_names(self):
         expected = {
-            "workspace_read_file", "workspace_write_file", "workspace_edit_file",
-            "workspace_apply_patch", "workspace_rename", "workspace_list_dir",
-            "workspace_glob", "workspace_grep", "workspace_bash",
+            "workspace_read_file",
+            "workspace_write_file",
+            "workspace_edit_file",
+            "workspace_apply_patch",
+            "workspace_rename",
+            "workspace_list_dir",
+            "workspace_glob",
+            "workspace_grep",
+            "workspace_bash",
         }
         assert expected == WORKSPACE_TOOL_NAMES
 
@@ -147,13 +153,17 @@ class TestSensitiveEnv:
     """get_sanitized_env / _detect_sensitive_env_access."""
 
     def test_sanitized_env_removes_keys(self):
-        with patch.dict("os.environ", {
-            "HOME": "/Users/test",
-            "OPENAI_API_KEY": "sk-secret",
-            "GITHUB_TOKEN": "ghp-xxx",
-            "PATH": "/usr/bin",
-            "MY_SECRET": "hidden",
-        }, clear=True):
+        with patch.dict(
+            "os.environ",
+            {
+                "HOME": "/Users/test",
+                "OPENAI_API_KEY": "sk-secret",
+                "GITHUB_TOKEN": "ghp-xxx",
+                "PATH": "/usr/bin",
+                "MY_SECRET": "hidden",
+            },
+            clear=True,
+        ):
             result = get_sanitized_env()
             assert "HOME" in result
             assert "PATH" in result
@@ -162,12 +172,16 @@ class TestSensitiveEnv:
             assert "MY_SECRET" not in result
 
     def test_sanitized_env_pattern_match(self):
-        with patch.dict("os.environ", {
-            "CUSTOM_API_KEY": "xxx",
-            "DB_PASSWORD": "yyy",
-            "AWS_SESSION_TOKEN": "zzz",
-            "NORMAL_VAR": "ok",
-        }, clear=True):
+        with patch.dict(
+            "os.environ",
+            {
+                "CUSTOM_API_KEY": "xxx",
+                "DB_PASSWORD": "yyy",
+                "AWS_SESSION_TOKEN": "zzz",
+                "NORMAL_VAR": "ok",
+            },
+            clear=True,
+        ):
             result = get_sanitized_env()
             assert "CUSTOM_API_KEY" not in result
             assert "DB_PASSWORD" not in result
@@ -253,9 +267,12 @@ class TestReadFile:
             offset=0,
         )
 
-        result = await handle_workspace_tool_call("workspace_read_file", {
-            "path": "src/main.py",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_read_file",
+            {
+                "path": "src/main.py",
+            },
+        )
 
         assert "main.py" in result
         assert "import os" in result
@@ -270,11 +287,14 @@ class TestReadFile:
             limit=2,
         )
 
-        result = await handle_workspace_tool_call("workspace_read_file", {
-            "path": "big.txt",
-            "offset": 9,
-            "limit": 2,
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_read_file",
+            {
+                "path": "big.txt",
+                "offset": 9,
+                "limit": 2,
+            },
+        )
 
         assert "showing lines" in result
 
@@ -286,10 +306,13 @@ class TestWriteFile:
         mock_ws.get_active.return_value = active_workspace
         mock_ws.write_file.return_value = "File written: src/new.py"
 
-        result = await handle_workspace_tool_call("workspace_write_file", {
-            "path": "src/new.py",
-            "content": "print('new')",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_write_file",
+            {
+                "path": "src/new.py",
+                "content": "print('new')",
+            },
+        )
 
         mock_ws.write_file.assert_called_once_with("ws01", "src/new.py", "print('new')")
         assert "written" in result
@@ -302,11 +325,14 @@ class TestEditFile:
         mock_ws.get_active.return_value = active_workspace
         mock_ws.edit_file.return_value = "1 replacement made"
 
-        result = await handle_workspace_tool_call("workspace_edit_file", {
-            "path": "src/main.py",
-            "old_string": "print('old')",
-            "new_string": "print('new')",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_edit_file",
+            {
+                "path": "src/main.py",
+                "old_string": "print('old')",
+                "new_string": "print('new')",
+            },
+        )
 
         assert "replacement" in result
 
@@ -318,10 +344,13 @@ class TestRename:
         mock_ws.get_active.return_value = active_workspace
         mock_ws.rename_file.return_value = "Renamed: old.py -> new.py"
 
-        result = await handle_workspace_tool_call("workspace_rename", {
-            "old_path": "old.py",
-            "new_path": "new.py",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_rename",
+            {
+                "old_path": "old.py",
+                "new_path": "new.py",
+            },
+        )
 
         assert "Renamed" in result
 
@@ -332,9 +361,14 @@ class TestListDir:
     async def test_list_dir(self, mock_ws, active_workspace):
         mock_ws.get_active.return_value = active_workspace
         mock_ws.get_file_tree.return_value = [
-            FileTreeNode(name="src", path="src", type="dir", children=[
-                FileTreeNode(name="main.py", path="src/main.py", type="file", size=1024),
-            ]),
+            FileTreeNode(
+                name="src",
+                path="src",
+                type="dir",
+                children=[
+                    FileTreeNode(name="main.py", path="src/main.py", type="file", size=1024),
+                ],
+            ),
             FileTreeNode(name="README.md", path="README.md", type="file", size=512),
         ]
 
@@ -363,9 +397,12 @@ class TestGlob:
         (tmp_path / "b.py").write_text("pass")
         (tmp_path / "c.txt").write_text("text")
 
-        result = await handle_workspace_tool_call("workspace_glob", {
-            "pattern": "*.py",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_glob",
+            {
+                "pattern": "*.py",
+            },
+        )
 
         assert "a.py" in result
         assert "b.py" in result
@@ -375,9 +412,12 @@ class TestGlob:
         mock_ws.get_active.return_value = active_ws_with_tmp
         mock_ws.get_workspace.return_value = active_ws_with_tmp
 
-        result = await handle_workspace_tool_call("workspace_glob", {
-            "pattern": "*.xyz",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_glob",
+            {
+                "pattern": "*.xyz",
+            },
+        )
 
         assert "No files" in result
 
@@ -390,9 +430,12 @@ class TestGlob:
         (nm / "index.js").write_text("module.exports = {}")
         (tmp_path / "app.js").write_text("const x = 1;")
 
-        result = await handle_workspace_tool_call("workspace_glob", {
-            "pattern": "**/*.js",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_glob",
+            {
+                "pattern": "**/*.js",
+            },
+        )
 
         assert "app.js" in result
         assert "node_modules" not in result
@@ -410,9 +453,12 @@ class TestGrep:
 
         with patch.dict("sys.modules", {"nexus_rust": None}):
             with patch("shutil.which", return_value=None):
-                result = await handle_workspace_tool_call("workspace_grep", {
-                    "pattern": "hello",
-                })
+                result = await handle_workspace_tool_call(
+                    "workspace_grep",
+                    {
+                        "pattern": "hello",
+                    },
+                )
 
         assert "Found" in result
         assert "hello.py" in result
@@ -425,9 +471,12 @@ class TestGrep:
 
         with patch.dict("sys.modules", {"nexus_rust": None}):
             with patch("shutil.which", return_value=None):
-                result = await handle_workspace_tool_call("workspace_grep", {
-                    "pattern": "NONEXISTENT_PATTERN",
-                })
+                result = await handle_workspace_tool_call(
+                    "workspace_grep",
+                    {
+                        "pattern": "NONEXISTENT_PATTERN",
+                    },
+                )
 
         assert "No matches" in result
 
@@ -439,9 +488,12 @@ class TestGrep:
 
         with patch.dict("sys.modules", {"nexus_rust": None}):
             with patch("shutil.which", return_value=None):
-                result = await handle_workspace_tool_call("workspace_grep", {
-                    "pattern": "[invalid",
-                })
+                result = await handle_workspace_tool_call(
+                    "workspace_grep",
+                    {
+                        "pattern": "[invalid",
+                    },
+                )
 
         assert "Error" in result
 
@@ -449,10 +501,13 @@ class TestGrep:
         mock_ws.get_active.return_value = active_ws_with_tmp
         mock_ws.get_workspace.return_value = active_ws_with_tmp
 
-        result = await handle_workspace_tool_call("workspace_grep", {
-            "pattern": "test",
-            "path": "../../etc",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_grep",
+            {
+                "pattern": "test",
+                "path": "../../etc",
+            },
+        )
 
         assert "Error" in result
 
@@ -463,18 +518,24 @@ class TestBash:
     async def test_bash_blocked_dangerous(self, mock_ws, active_workspace):
         mock_ws.get_active.return_value = active_workspace
 
-        result = await handle_workspace_tool_call("workspace_bash", {
-            "command": "rm -rf /",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_bash",
+            {
+                "command": "rm -rf /",
+            },
+        )
 
         assert "Blocked" in result or "dangerous" in result.lower()
 
     async def test_bash_blocked_restricted(self, mock_ws, active_workspace):
         mock_ws.get_active.return_value = active_workspace
 
-        result = await handle_workspace_tool_call("workspace_bash", {
-            "command": "rm file.txt",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_bash",
+            {
+                "command": "rm file.txt",
+            },
+        )
 
         assert "rm" in result.lower() or "Error" in result or "보안" in result
 
@@ -493,9 +554,12 @@ class TestBash:
             mock_sandbox.execute = AsyncMock(return_value=mock_result)
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "echo hello world",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "echo hello world",
+                },
+            )
 
         assert "hello world" in result
 
@@ -509,9 +573,12 @@ class TestBash:
             mock_sandbox.execute = AsyncMock(return_value=mock_result)
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "sleep 999",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "sleep 999",
+                },
+            )
 
         assert "timed out" in result
 
@@ -530,9 +597,12 @@ class TestBash:
             mock_sandbox.execute = AsyncMock(return_value=mock_result)
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "nonexistent_cmd",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "nonexistent_cmd",
+                },
+            )
 
         assert "127" in result
         assert "command not found" in result
@@ -552,9 +622,12 @@ class TestBash:
             mock_sandbox.execute = AsyncMock(return_value=mock_result)
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "echo $OPENAI_API_KEY",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "echo $OPENAI_API_KEY",
+                },
+            )
 
         assert "sandbox" in result.lower() or "OPENAI_API_KEY" in result
 
@@ -574,9 +647,12 @@ class TestBash:
             mock_sandbox.execute = AsyncMock(return_value=mock_result)
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "touch /etc/test",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "touch /etc/test",
+                },
+            )
 
         assert "sandbox" in result.lower()
 
@@ -592,19 +668,16 @@ class TestApplyPatch:
         target = tmp_path / "hello.py"
         target.write_text("print('old')\n")
 
-        patch_text = (
-            "--- a/hello.py\n"
-            "+++ b/hello.py\n"
-            "@@ -1 +1 @@\n"
-            "-print('old')\n"
-            "+print('new')\n"
-        )
+        patch_text = "--- a/hello.py\n+++ b/hello.py\n@@ -1 +1 @@\n-print('old')\n+print('new')\n"
 
         with patch("open_agent.core.fuzzy.apply_patch_to_files") as mock_apply:
             mock_apply.return_value = "Applied 1 hunk(s)"
-            result = await handle_workspace_tool_call("workspace_apply_patch", {
-                "patch": patch_text,
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_apply_patch",
+                {
+                    "patch": patch_text,
+                },
+            )
 
         assert "Applied" in result
 
@@ -612,18 +685,24 @@ class TestApplyPatch:
         mock_ws.get_active.return_value = active_ws_with_tmp
         mock_ws.get_workspace.return_value = active_ws_with_tmp
 
-        result = await handle_workspace_tool_call("workspace_apply_patch", {
-            "patch": "   ",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_apply_patch",
+            {
+                "patch": "   ",
+            },
+        )
         assert "Error" in result
 
     async def test_apply_patch_no_workspace(self, mock_ws, active_ws_with_tmp):
         mock_ws.get_active.return_value = active_ws_with_tmp
         mock_ws.get_workspace.return_value = None
 
-        result = await handle_workspace_tool_call("workspace_apply_patch", {
-            "patch": "--- a/f.py\n+++ b/f.py\n",
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_apply_patch",
+            {
+                "patch": "--- a/f.py\n+++ b/f.py\n",
+            },
+        )
         assert "Error" in result
 
 
@@ -639,10 +718,13 @@ class TestGrepWithGlobFilter:
 
         with patch.dict("sys.modules", {"nexus_rust": None}):
             with patch("shutil.which", return_value=None):
-                result = await handle_workspace_tool_call("workspace_grep", {
-                    "pattern": "hello",
-                    "glob_filter": "*.py",
-                })
+                result = await handle_workspace_tool_call(
+                    "workspace_grep",
+                    {
+                        "pattern": "hello",
+                        "glob_filter": "*.py",
+                    },
+                )
 
         assert "app.py" in result
 
@@ -654,10 +736,13 @@ class TestGrepWithGlobFilter:
 
         with patch.dict("sys.modules", {"nexus_rust": None}):
             with patch("shutil.which", return_value=None):
-                result = await handle_workspace_tool_call("workspace_grep", {
-                    "pattern": "hello",
-                    "case_insensitive": True,
-                })
+                result = await handle_workspace_tool_call(
+                    "workspace_grep",
+                    {
+                        "pattern": "hello",
+                        "case_insensitive": True,
+                    },
+                )
 
         assert "Found" in result
 
@@ -669,10 +754,13 @@ class TestGrepWithGlobFilter:
 
         with patch.dict("sys.modules", {"nexus_rust": None}):
             with patch("shutil.which", return_value=None):
-                result = await handle_workspace_tool_call("workspace_grep", {
-                    "pattern": "target",
-                    "context": 1,
-                })
+                result = await handle_workspace_tool_call(
+                    "workspace_grep",
+                    {
+                        "pattern": "target",
+                        "context": 1,
+                    },
+                )
 
         assert "target" in result
 
@@ -684,10 +772,13 @@ class TestGrepWithGlobFilter:
 
         with patch.dict("sys.modules", {"nexus_rust": None}):
             with patch("shutil.which", return_value=None):
-                result = await handle_workspace_tool_call("workspace_grep", {
-                    "pattern": "hello",
-                    "path": "single.py",
-                })
+                result = await handle_workspace_tool_call(
+                    "workspace_grep",
+                    {
+                        "pattern": "hello",
+                        "path": "single.py",
+                    },
+                )
 
         assert "Found" in result
 
@@ -699,9 +790,12 @@ class TestGrepWithGlobFilter:
 
         with patch.dict("sys.modules", {"nexus_rust": None}):
             with patch("shutil.which", return_value=None):
-                result = await handle_workspace_tool_call("workspace_grep", {
-                    "pattern": "x" * 1001,
-                })
+                result = await handle_workspace_tool_call(
+                    "workspace_grep",
+                    {
+                        "pattern": "x" * 1001,
+                    },
+                )
 
         assert "Error" in result
 
@@ -719,13 +813,18 @@ class TestBashNetworkEscalation:
                 "policy": "NETWORK_ALLOWED",
             }
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "npm install express",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "npm install express",
+                },
+            )
 
         # Should return escalation dict
         assert isinstance(result, dict)
         assert result.get("__escalation__") is True
+        assert result.get("risk_level") == "network"
+        assert result.get("required_policy") == "network_allowed"
 
     async def test_bash_execution_error(self, mock_ws, active_workspace):
         mock_ws.get_active.return_value = active_workspace
@@ -735,9 +834,12 @@ class TestBashNetworkEscalation:
             mock_sandbox.execute = AsyncMock(side_effect=OSError("sandbox init failed"))
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "echo test",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "echo test",
+                },
+            )
 
         assert "Error" in result
 
@@ -748,10 +850,13 @@ class TestBashNetworkEscalation:
         with patch("open_agent.core.sandbox.sandbox_manager") as mock_sandbox:
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "ls",
-                "cwd": "../../etc",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "ls",
+                    "cwd": "../../etc",
+                },
+            )
 
         assert "Error" in result
 
@@ -771,9 +876,12 @@ class TestBashNetworkEscalation:
             mock_sandbox.execute = AsyncMock(return_value=mock_result)
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "cat huge_file",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "cat huge_file",
+                },
+            )
 
         assert "truncated" in result
 
@@ -792,9 +900,12 @@ class TestBashNetworkEscalation:
             mock_sandbox.execute = AsyncMock(return_value=mock_result)
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "gcc test.c",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "gcc test.c",
+                },
+            )
 
         assert "warning" in result
         assert "[stderr]" in result
@@ -814,9 +925,12 @@ class TestBashNetworkEscalation:
             mock_sandbox.execute = AsyncMock(return_value=mock_result)
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            result = await handle_workspace_tool_call("workspace_bash", {
-                "command": "true",
-            })
+            result = await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "true",
+                },
+            )
 
         assert "(no output)" in result
 
@@ -836,10 +950,13 @@ class TestBashNetworkEscalation:
             mock_sandbox.execute = AsyncMock(return_value=mock_result)
             mock_sandbox.request_escalation.return_value = {"needed": False}
 
-            await handle_workspace_tool_call("workspace_bash", {
-                "command": "sleep 1",
-                "timeout": 999,
-            })
+            await handle_workspace_tool_call(
+                "workspace_bash",
+                {
+                    "command": "sleep 1",
+                    "timeout": 999,
+                },
+            )
 
             # Verify the actual timeout passed was capped at 120
             call_kwargs = mock_sandbox.execute.call_args
@@ -856,10 +973,13 @@ class TestGlobLimit:
         for i in range(10):
             (tmp_path / f"file{i}.txt").write_text(f"content {i}")
 
-        result = await handle_workspace_tool_call("workspace_glob", {
-            "pattern": "*.txt",
-            "limit": 3,
-        })
+        result = await handle_workspace_tool_call(
+            "workspace_glob",
+            {
+                "pattern": "*.txt",
+                "limit": 3,
+            },
+        )
 
         assert "Found 3 file" in result
 
@@ -905,7 +1025,9 @@ class TestFormatHelpers:
     def test_format_tree_nested(self):
         nodes = [
             FileTreeNode(
-                name="src", path="src", type="dir",
+                name="src",
+                path="src",
+                type="dir",
                 children=[
                     FileTreeNode(name="main.py", path="src/main.py", type="file", size=50),
                 ],

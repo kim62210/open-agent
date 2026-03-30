@@ -89,11 +89,13 @@ _SENSITIVE_ENV_PATTERNS = ("_KEY", "_SECRET", "_TOKEN", "_PASSWORD", "_CREDENTIA
 
 def get_sanitized_env() -> Dict[str, str]:
     """현재 환경변수에서 민감 키를 제거한 사본 반환"""
+
     def _is_sensitive(key: str) -> bool:
         if key in _SENSITIVE_ENV_KEYS:
             return True
         upper = key.upper()
         return any(upper.endswith(p) for p in _SENSITIVE_ENV_PATTERNS)
+
     return {k: v for k, v in os.environ.items() if not _is_sensitive(k)}
 
 
@@ -146,7 +148,7 @@ def _detect_sensitive_env_access(command: str) -> Optional[str]:
     referenced = []
     for key in _SENSITIVE_ENV_KEYS:
         # $KEY, ${KEY}, %KEY% (Windows) 패턴 감지
-        if re.search(rf'\$\{{?{key}\}}?|%{key}%', command):
+        if re.search(rf"\$\{{?{key}\}}?|%{key}%", command):
             referenced.append(key)
     if referenced:
         keys_str = ", ".join(referenced)
@@ -193,7 +195,11 @@ def get_workspace_extra_tools() -> List[Dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string", "description": "glob 패턴 (예: **/*.py)"},
-                        "limit": {"type": "integer", "description": "최대 결과 수 (기본: 100)", "default": 100},
+                        "limit": {
+                            "type": "integer",
+                            "description": "최대 결과 수 (기본: 100)",
+                            "default": 100,
+                        },
                     },
                     "required": ["pattern"],
                 },
@@ -221,9 +227,19 @@ def get_workspace_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "워크스페이스 루트 기준 상대 경로 (예: src/main.py)"},
-                        "offset": {"type": "integer", "description": "읽기 시작 라인 번호 (0-based, 기본: 0)", "default": 0},
-                        "limit": {"type": "integer", "description": "읽을 라인 수 (생략 시 전체 파일)"},
+                        "path": {
+                            "type": "string",
+                            "description": "워크스페이스 루트 기준 상대 경로 (예: src/main.py)",
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "읽기 시작 라인 번호 (0-based, 기본: 0)",
+                            "default": 0,
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "읽을 라인 수 (생략 시 전체 파일)",
+                        },
                     },
                     "required": ["path"],
                 },
@@ -241,7 +257,10 @@ def get_workspace_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "워크스페이스 루트 기준 상대 경로 (예: src/utils.py)"},
+                        "path": {
+                            "type": "string",
+                            "description": "워크스페이스 루트 기준 상대 경로 (예: src/utils.py)",
+                        },
                         "content": {"type": "string", "description": "파일에 쓸 전체 내용"},
                     },
                     "required": ["path", "content"],
@@ -262,10 +281,20 @@ def get_workspace_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "워크스페이스 루트 기준 상대 경로"},
-                        "old_string": {"type": "string", "description": "교체할 기존 문자열 (파일 내 유일해야 함, 또는 replace_all 사용)"},
+                        "path": {
+                            "type": "string",
+                            "description": "워크스페이스 루트 기준 상대 경로",
+                        },
+                        "old_string": {
+                            "type": "string",
+                            "description": "교체할 기존 문자열 (파일 내 유일해야 함, 또는 replace_all 사용)",
+                        },
                         "new_string": {"type": "string", "description": "교체될 새 문자열"},
-                        "replace_all": {"type": "boolean", "description": "true: 모든 매치를 교체, false(기본): 유일 매치만 교체", "default": False},
+                        "replace_all": {
+                            "type": "boolean",
+                            "description": "true: 모든 매치를 교체, false(기본): 유일 매치만 교체",
+                            "default": False,
+                        },
                     },
                     "required": ["path", "old_string", "new_string"],
                 },
@@ -305,8 +334,14 @@ def get_workspace_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "old_path": {"type": "string", "description": "현재 파일/디렉토리 경로 (워크스페이스 루트 기준 상대 경로)"},
-                        "new_path": {"type": "string", "description": "새 파일/디렉토리 경로 (워크스페이스 루트 기준 상대 경로)"},
+                        "old_path": {
+                            "type": "string",
+                            "description": "현재 파일/디렉토리 경로 (워크스페이스 루트 기준 상대 경로)",
+                        },
+                        "new_path": {
+                            "type": "string",
+                            "description": "새 파일/디렉토리 경로 (워크스페이스 루트 기준 상대 경로)",
+                        },
                     },
                     "required": ["old_path", "new_path"],
                 },
@@ -325,9 +360,21 @@ def get_workspace_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "탐색 시작 경로 (워크스페이스 루트 기준 상대 경로, 기본: 루트)", "default": "."},
-                        "recursive": {"type": "boolean", "description": "하위 디렉토리 재귀 탐색 여부 (기본: false)", "default": False},
-                        "max_depth": {"type": "integer", "description": "재귀 탐색 시 최대 깊이 (기본: 3)", "default": 3},
+                        "path": {
+                            "type": "string",
+                            "description": "탐색 시작 경로 (워크스페이스 루트 기준 상대 경로, 기본: 루트)",
+                            "default": ".",
+                        },
+                        "recursive": {
+                            "type": "boolean",
+                            "description": "하위 디렉토리 재귀 탐색 여부 (기본: false)",
+                            "default": False,
+                        },
+                        "max_depth": {
+                            "type": "integer",
+                            "description": "재귀 탐색 시 최대 깊이 (기본: 3)",
+                            "default": 3,
+                        },
                     },
                 },
             },
@@ -344,8 +391,15 @@ def get_workspace_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string", "description": "glob 패턴 (예: **/*.py, src/**/*.ts, *.json)"},
-                        "limit": {"type": "integer", "description": "최대 결과 수 (기본: 100)", "default": 100},
+                        "pattern": {
+                            "type": "string",
+                            "description": "glob 패턴 (예: **/*.py, src/**/*.ts, *.json)",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "최대 결과 수 (기본: 100)",
+                            "default": 100,
+                        },
                     },
                     "required": ["pattern"],
                 },
@@ -364,12 +418,34 @@ def get_workspace_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string", "description": "검색할 정규식 패턴 (Python re 문법)"},
-                        "path": {"type": "string", "description": "검색 시작 경로 (워크스페이스 루트 기준 상대 경로, 기본: 루트)", "default": "."},
-                        "glob_filter": {"type": "string", "description": "파일 필터 glob 패턴 (예: *.py, *.ts)"},
-                        "case_insensitive": {"type": "boolean", "description": "대소문자 무시 여부 (기본: false)", "default": False},
-                        "context": {"type": "integer", "description": "매치 전후로 표시할 컨텍스트 라인 수 (기본: 0)", "default": 0},
-                        "limit": {"type": "integer", "description": "최대 매치 수 (기본: 50)", "default": 50},
+                        "pattern": {
+                            "type": "string",
+                            "description": "검색할 정규식 패턴 (Python re 문법)",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "검색 시작 경로 (워크스페이스 루트 기준 상대 경로, 기본: 루트)",
+                            "default": ".",
+                        },
+                        "glob_filter": {
+                            "type": "string",
+                            "description": "파일 필터 glob 패턴 (예: *.py, *.ts)",
+                        },
+                        "case_insensitive": {
+                            "type": "boolean",
+                            "description": "대소문자 무시 여부 (기본: false)",
+                            "default": False,
+                        },
+                        "context": {
+                            "type": "integer",
+                            "description": "매치 전후로 표시할 컨텍스트 라인 수 (기본: 0)",
+                            "default": 0,
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "최대 매치 수 (기본: 50)",
+                            "default": 50,
+                        },
                     },
                     "required": ["pattern"],
                 },
@@ -389,8 +465,15 @@ def get_workspace_tools() -> List[Dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "command": {"type": "string", "description": "실행할 셸 명령어"},
-                        "cwd": {"type": "string", "description": "작업 디렉토리 (워크스페이스 루트 기준 상대 경로, 생략 시 루트)"},
-                        "timeout": {"type": "integer", "description": "타임아웃 초 (기본: 30, 최대: 120)", "default": 30},
+                        "cwd": {
+                            "type": "string",
+                            "description": "작업 디렉토리 (워크스페이스 루트 기준 상대 경로, 생략 시 루트)",
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "타임아웃 초 (기본: 30, 최대: 120)",
+                            "default": 30,
+                        },
                     },
                     "required": ["command"],
                 },
@@ -465,9 +548,7 @@ def _handle_read_file(ws_id: str, args: Dict[str, Any]) -> str:
     )
     lines = fc.content.split("\n")
     offset = fc.offset
-    numbered = "\n".join(
-        f"{offset + i + 1:>6}\t{line}" for i, line in enumerate(lines)
-    )
+    numbered = "\n".join(f"{offset + i + 1:>6}\t{line}" for i, line in enumerate(lines))
     header = f"File: {fc.path} ({fc.total_lines} lines total)"
     if fc.offset > 0 or fc.limit:
         header += f" [showing lines {fc.offset + 1}-{fc.offset + len(lines)}]"
@@ -480,6 +561,7 @@ def _handle_write_file(ws_id: str, args: Dict[str, Any]) -> str:
 
 def _handle_edit_file(ws_id: str, args: Dict[str, Any]) -> str:
     from open_agent.models.workspace import EditFileRequest
+
     req = EditFileRequest(
         path=args["path"],
         old_string=args["old_string"],
@@ -591,10 +673,17 @@ def _handle_grep(ws_id: str, args: Dict[str, Any]) -> str:
     # Tier 1: Native Rust grep (fastest — in-process, no subprocess)
     try:
         import nexus_rust
+
         logger.debug("workspace_grep: using native Rust backend")
         return _handle_grep_rust(
-            nexus_rust, root, target, pattern, glob_filter,
-            case_insensitive, context_lines, limit,
+            nexus_rust,
+            root,
+            target,
+            pattern,
+            glob_filter,
+            case_insensitive,
+            context_lines,
+            limit,
         )
     except ImportError:
         pass
@@ -606,22 +695,38 @@ def _handle_grep(ws_id: str, args: Dict[str, Any]) -> str:
     if rg_path:
         logger.debug("workspace_grep: using ripgrep subprocess backend")
         return _handle_grep_rg(
-            rg_path, root, target, pattern, glob_filter,
-            case_insensitive, context_lines, limit,
+            rg_path,
+            root,
+            target,
+            pattern,
+            glob_filter,
+            case_insensitive,
+            context_lines,
+            limit,
         )
 
     # Tier 3: Pure Python grep fallback
     logger.debug("workspace_grep: using Python re backend")
     return _handle_grep_python(
-        root, target, pattern, glob_filter,
-        case_insensitive, context_lines, limit,
+        root,
+        target,
+        pattern,
+        glob_filter,
+        case_insensitive,
+        context_lines,
+        limit,
     )
 
 
 def _handle_grep_rust(
-    nexus_rust, root: Path, target: Path, pattern: str,
-    glob_filter: Optional[str], case_insensitive: bool,
-    context_lines: int, limit: int,
+    nexus_rust,
+    root: Path,
+    target: Path,
+    pattern: str,
+    glob_filter: Optional[str],
+    case_insensitive: bool,
+    context_lines: int,
+    limit: int,
 ) -> str:
     """Native Rust grep via nexus_rust module (fastest)."""
     matches = nexus_rust.rust_grep(
@@ -645,7 +750,7 @@ def _handle_grep_rust(
         # Make path relative to workspace root
         rel_path = m["path"]
         if rel_path.startswith(root_str):
-            rel_path = rel_path[len(root_str):].lstrip("/")
+            rel_path = rel_path[len(root_str) :].lstrip("/")
 
         if context_lines > 0:
             if prev_path is not None and prev_path != rel_path:
@@ -672,9 +777,14 @@ def _handle_grep_rust(
 
 
 def _handle_grep_rg(
-    rg_path: str, root: Path, target: Path, pattern: str,
-    glob_filter: Optional[str], case_insensitive: bool,
-    context_lines: int, limit: int,
+    rg_path: str,
+    root: Path,
+    target: Path,
+    pattern: str,
+    glob_filter: Optional[str],
+    case_insensitive: bool,
+    context_lines: int,
+    limit: int,
 ) -> str:
     """ripgrep subprocess-based grep (10-100x faster)."""
     import subprocess
@@ -743,9 +853,13 @@ def _handle_grep_rg(
 
 
 def _handle_grep_python(
-    root: Path, target: Path, pattern: str,
-    glob_filter: Optional[str], case_insensitive: bool,
-    context_lines: int, limit: int,
+    root: Path,
+    target: Path,
+    pattern: str,
+    glob_filter: Optional[str],
+    case_insensitive: bool,
+    context_lines: int,
+    limit: int,
 ) -> str:
     """Pure Python grep fallback."""
     if len(pattern) > 1000:
@@ -838,7 +952,18 @@ async def _handle_bash(ws_id: str, args: Dict[str, Any]) -> "str | Dict[str, Any
         cwd = root
 
     # 네트워크 차단 감지 헬퍼
-    _NETWORK_KEYWORDS = ["network", "resolve", "connect", "eperm", "npm error", "pip", "fetch", "econnrefused", "etimedout", "enetunreach"]
+    _NETWORK_KEYWORDS = [
+        "network",
+        "resolve",
+        "connect",
+        "eperm",
+        "npm error",
+        "pip",
+        "fetch",
+        "econnrefused",
+        "etimedout",
+        "enetunreach",
+    ]
     _NETWORK_COMMANDS = re.compile(
         r"\b(npm\s+install|npm\s+i\b|yarn\s+add|yarn\s+install|pnpm\s+add|pnpm\s+install|"
         r"pip\s+install|pip3\s+install|uv\s+pip\s+install|"
@@ -862,6 +987,8 @@ async def _handle_bash(ws_id: str, args: Dict[str, Any]) -> "str | Dict[str, Any
         if escalation.get("needed"):
             return {
                 "__escalation__": True,
+                "risk_level": "network",
+                "required_policy": SandboxPolicy.NETWORK_ALLOWED.value,
                 "command": command,
                 "cwd": str(cwd),
                 "workspace_id": ws_id,

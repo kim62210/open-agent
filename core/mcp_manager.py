@@ -169,7 +169,9 @@ class MCPClientManager:
                     raise ConfigError(f"Server '{server_name}': stdio transport requires 'command'")
                 # command가 PATH에 존재하는지 확인
                 if not shutil.which(config.command):
-                    raise ConfigError(f"Server '{server_name}': command not found in PATH: '{config.command}'")
+                    raise ConfigError(
+                        f"Server '{server_name}': command not found in PATH: '{config.command}'"
+                    )
                 params = StdioServerParameters(
                     command=config.command,
                     args=config.args or [],
@@ -183,16 +185,22 @@ class MCPClientManager:
                     raise ConfigError(f"Server '{server_name}': sse transport requires 'url'")
                 parsed = urlparse(config.url)
                 if parsed.scheme not in ("http", "https"):
-                    raise ConfigError(f"Server '{server_name}': URL scheme must be http or https, got '{parsed.scheme}'")
+                    raise ConfigError(
+                        f"Server '{server_name}': URL scheme must be http or https, got '{parsed.scheme}'"
+                    )
                 read_stream, write_stream = await exit_stack.enter_async_context(
                     sse_client(config.url)
                 )
             elif config.transport == "streamable-http":
                 if not config.url:
-                    raise ConfigError(f"Server '{server_name}': streamable-http transport requires 'url'")
+                    raise ConfigError(
+                        f"Server '{server_name}': streamable-http transport requires 'url'"
+                    )
                 parsed = urlparse(config.url)
                 if parsed.scheme not in ("http", "https"):
-                    raise ConfigError(f"Server '{server_name}': URL scheme must be http or https, got '{parsed.scheme}'")
+                    raise ConfigError(
+                        f"Server '{server_name}': URL scheme must be http or https, got '{parsed.scheme}'"
+                    )
                 if config.headers:
                     http_client = await exit_stack.enter_async_context(
                         httpx.AsyncClient(headers=config.headers)
@@ -208,9 +216,7 @@ class MCPClientManager:
             else:
                 raise ConfigError(f"Unsupported transport: {config.transport}")
 
-            session = await exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
+            session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
             await session.initialize()
 
             self._connections[server_name] = (exit_stack, session)
@@ -264,7 +270,9 @@ class MCPClientManager:
                 "function": {
                     "name": f"{server_name}__{tool.name}",
                     "description": tool.description or "",
-                    "parameters": tool.inputSchema if tool.inputSchema else {"type": "object", "properties": {}},
+                    "parameters": tool.inputSchema
+                    if tool.inputSchema
+                    else {"type": "object", "properties": {}},
                 },
             }
             for tool in tools
@@ -306,9 +314,7 @@ class MCPClientManager:
         server_names = list(self._connections.keys())
         if not server_names:
             return []
-        results = await asyncio.gather(
-            *(self._fetch_server_tools(name) for name in server_names)
-        )
+        results = await asyncio.gather(*(self._fetch_server_tools(name) for name in server_names))
         all_tools = []
         for tools in results:
             all_tools.extend(tools)
@@ -319,7 +325,9 @@ class MCPClientManager:
         cached_tools = await self._fetch_server_tools(server_name)
         return [
             MCPToolInfo(
-                name=t["function"]["name"].split("__", 1)[1] if "__" in t["function"]["name"] else t["function"]["name"],
+                name=t["function"]["name"].split("__", 1)[1]
+                if "__" in t["function"]["name"]
+                else t["function"]["name"],
                 description=t["function"].get("description"),
                 input_schema=t["function"].get("parameters", {}),
                 server_name=server_name,
@@ -331,6 +339,22 @@ class MCPClientManager:
         """Call a tool on a specific server."""
         if server_name not in self._connections:
             return f"Error: Server '{server_name}' is not connected"
+
+        from open_agent.core.settings_manager import settings_manager
+
+        approval_settings = settings_manager.settings.approval
+        if (
+            approval_settings.allowed_mcp_servers
+            and server_name not in approval_settings.allowed_mcp_servers
+        ):
+            return f"Error: MCP server '{server_name}' is not allowed by current policy"
+
+        full_tool_name = f"{server_name}__{tool_name}"
+        if (
+            approval_settings.allowed_tool_names
+            and full_tool_name not in approval_settings.allowed_tool_names
+        ):
+            return f"Error: MCP tool '{full_tool_name}' is not allowed by current policy"
 
         # Circuit breaker check
         if not self._check_circuit(server_name):
@@ -440,7 +464,16 @@ class MCPClientManager:
     @staticmethod
     def _mask_sensitive_value(key: str, value: str) -> str:
         """민감한 키의 값을 마스킹"""
-        sensitive_keywords = {"auth", "token", "key", "secret", "password", "credential", "api_key", "apikey"}
+        sensitive_keywords = {
+            "auth",
+            "token",
+            "key",
+            "secret",
+            "password",
+            "credential",
+            "api_key",
+            "apikey",
+        }
         if any(kw in key.lower() for kw in sensitive_keywords):
             if len(value) <= 8:
                 return "***"

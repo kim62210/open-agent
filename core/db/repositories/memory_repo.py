@@ -25,9 +25,11 @@ class MemoryRepository(BaseRepository[MemoryORM]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def clear_non_pinned(self) -> int:
+    async def clear_non_pinned(self, owner_user_id: str | None = None) -> int:
         """Delete all memories that are not pinned. Returns count deleted."""
         stmt = delete(MemoryORM).where(MemoryORM.is_pinned == False)  # noqa: E712
+        if owner_user_id is not None:
+            stmt = stmt.where(MemoryORM.owner_user_id == owner_user_id)
         result = await self.session.execute(stmt)
         await self.session.flush()
         return result.rowcount

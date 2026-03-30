@@ -11,6 +11,7 @@ class JobORM(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(256))
     description: Mapped[str] = mapped_column(Text, default="")
     prompt: Mapped[str] = mapped_column(Text)
@@ -39,9 +40,7 @@ class JobRunRecordORM(Base):
     __tablename__ = "job_run_records"
 
     run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    job_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("jobs.id", ondelete="CASCADE")
-    )
+    job_id: Mapped[str] = mapped_column(String(64), ForeignKey("jobs.id", ondelete="CASCADE"))
     started_at: Mapped[str] = mapped_column(String(64))
     finished_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32))

@@ -1,10 +1,9 @@
 """Memory API integration tests — listing, create, update, delete."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
-
 from open_agent.models.memory import MemoryItem
 
 
@@ -12,17 +11,22 @@ from open_agent.models.memory import MemoryItem
 async def memory_client(_patch_db_factory, monkeypatch):
     """httpx.AsyncClient wired to memory router with mocked memory_manager."""
     import httpx
-    from httpx import ASGITransport
-
     from fastapi import FastAPI
-    from core.auth.dependencies import get_current_user
+    from httpx import ASGITransport
     from open_agent.api.endpoints import memory as memory_router
+
+    from core.auth.dependencies import get_current_user
 
     test_app = FastAPI()
     test_app.include_router(memory_router.router, prefix="/api/memory")
 
     async def _fake_current_user() -> dict:
-        return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "admin"}
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "testuser",
+            "role": "admin",
+        }
 
     test_app.dependency_overrides[get_current_user] = _fake_current_user
 
@@ -33,9 +37,14 @@ async def memory_client(_patch_db_factory, monkeypatch):
 
 def _make_memory_item(id="mem-1", content="Test memory", is_pinned=False):
     return MemoryItem(
-        id=id, content=content, category="fact", confidence=0.7,
-        source="llm_inference", is_pinned=is_pinned,
-        created_at="2024-01-01T00:00:00Z", updated_at="2024-01-01T00:00:00Z",
+        id=id,
+        content=content,
+        category="fact",
+        confidence=0.7,
+        source="llm_inference",
+        is_pinned=is_pinned,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
     )
 
 
@@ -72,6 +81,12 @@ class TestCreateMemory:
                 json={"content": "New fact", "category": "fact"},
             )
         assert resp.status_code == 201
+        mock_mm.create.assert_awaited_once_with(
+            content="New fact",
+            category="fact",
+            confidence=0.7,
+            owner_user_id="test-user-id",
+        )
 
 
 class TestUpdateMemory:
@@ -82,18 +97,14 @@ class TestUpdateMemory:
         mem = _make_memory_item(content="Updated")
         with patch("open_agent.api.endpoints.memory.memory_manager") as mock_mm:
             mock_mm.update = AsyncMock(return_value=mem)
-            resp = await memory_client.patch(
-                "/api/memory/mem-1", json={"content": "Updated"}
-            )
+            resp = await memory_client.patch("/api/memory/mem-1", json={"content": "Updated"})
         assert resp.status_code == 200
 
     async def test_update_nonexistent_memory(self, memory_client: AsyncClient):
         """Returns 404 for non-existent memory."""
         with patch("open_agent.api.endpoints.memory.memory_manager") as mock_mm:
             mock_mm.update = AsyncMock(return_value=None)
-            resp = await memory_client.patch(
-                "/api/memory/nonexistent", json={"content": "Nope"}
-            )
+            resp = await memory_client.patch("/api/memory/nonexistent", json={"content": "Nope"})
         assert resp.status_code == 404
 
 

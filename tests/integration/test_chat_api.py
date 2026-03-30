@@ -14,11 +14,10 @@ async def chat_client(_patch_db_factory, monkeypatch):
     core/agent.py has a pre-existing syntax error (await in sync func),
     so we pre-inject a mock orchestrator into sys.modules before importing chat.
     """
-    import importlib
     import httpx
+    from fastapi import FastAPI
     from httpx import ASGITransport
 
-    from fastapi import FastAPI
     from core.auth.dependencies import get_current_user
 
     # Pre-inject a mock for core.agent so chat.py can import orchestrator
@@ -35,7 +34,12 @@ async def chat_client(_patch_db_factory, monkeypatch):
     test_app.include_router(chat.router, prefix="/api/chat")
 
     async def _fake_current_user() -> dict:
-        return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "admin"}
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "testuser",
+            "role": "admin",
+        }
 
     test_app.dependency_overrides[get_current_user] = _fake_current_user
 
@@ -54,13 +58,19 @@ class TestChatEndpoint:
         """Successful chat returns orchestrator response."""
         mock_response = {"choices": [{"message": {"content": "Hello!"}}]}
         with patch("open_agent.api.endpoints.chat.orchestrator") as mock_orch:
-            mock_orch.run = AsyncMock(return_value=mock_response)
-            resp = await chat_client.post(
-                "/api/chat/",
-                json={"messages": [{"role": "user", "content": "Hi"}]},
-            )
+            with patch("open_agent.api.endpoints.chat.run_manager") as mock_rm:
+                mock_rm.create_run = AsyncMock(return_value=MagicMock(id="run-1"))
+                mock_rm.append_event = AsyncMock()
+                mock_rm.finish_run = AsyncMock()
+                mock_orch.run = AsyncMock(return_value=mock_response)
+                resp = await chat_client.post(
+                    "/api/chat/",
+                    json={"messages": [{"role": "user", "content": "Hi"}]},
+                )
         assert resp.status_code == 200
         assert resp.json() == mock_response
+        mock_rm.create_run.assert_awaited_once()
+        mock_rm.finish_run.assert_awaited_once()
 
     async def test_chat_with_forced_workflow(self, chat_client: AsyncClient):
         """Chat with forced_workflow passes it to orchestrator."""
@@ -127,9 +137,13 @@ class TestChatStreamEndpoint:
 
     async def test_stream_returns_sse(self, chat_client: AsyncClient):
         """Streaming endpoint returns text/event-stream content type."""
+
         async def fake_stream(*args, **kwargs):
             yield {"type": "token", "content": "Hello"}
-            yield {"type": "done", "full_response": {"choices": [{"message": {"content": "Hello"}}]}}
+            yield {
+                "type": "done",
+                "full_response": {"choices": [{"message": {"content": "Hello"}}]},
+            }
 
         with patch("open_agent.api.endpoints.chat.orchestrator") as mock_orch:
             mock_orch.run_stream = fake_stream
@@ -142,6 +156,7 @@ class TestChatStreamEndpoint:
 
     async def test_stream_contains_events(self, chat_client: AsyncClient):
         """Stream response contains SSE-formatted data lines."""
+
         async def fake_stream(*args, **kwargs):
             yield {"type": "token", "content": "Hi"}
             yield {"type": "done", "full_response": {}}
@@ -157,6 +172,7 @@ class TestChatStreamEndpoint:
 
     async def test_stream_error_yields_error_event(self, chat_client: AsyncClient):
         """When stream generator raises, an error event is yielded."""
+
         async def failing_stream(*args, **kwargs):
             raise RuntimeError("Stream broke")
             yield  # make it a generator
@@ -177,32 +193,38 @@ class TestChatHelpers:
     def test_extract_text_string(self):
         """_extract_text handles plain string content."""
         from open_agent.api.endpoints.chat import _extract_text
+
         assert _extract_text("hello") == "hello"
 
     def test_extract_text_multimodal(self):
         """_extract_text handles multimodal array content."""
         from open_agent.api.endpoints.chat import _extract_text
+
         content = [{"type": "text", "text": "hello"}, {"type": "image", "url": "http://x"}]
         assert _extract_text(content) == "hello"
 
     def test_extract_text_empty_list(self):
         """_extract_text returns empty string for no text parts."""
         from open_agent.api.endpoints.chat import _extract_text
+
         assert _extract_text([{"type": "image", "url": "http://x"}]) == ""
 
     def test_safe_get_content_normal(self):
         """_safe_get_content extracts assistant content from response dict."""
         from open_agent.api.endpoints.chat import _safe_get_content
+
         resp = {"choices": [{"message": {"content": "Hi there"}}]}
         assert _safe_get_content(resp) == "Hi there"
 
     def test_safe_get_content_none(self):
         """_safe_get_content returns empty string for None content."""
         from open_agent.api.endpoints.chat import _safe_get_content
+
         resp = {"choices": [{"message": {"content": None}}]}
         assert _safe_get_content(resp) == ""
 
     def test_safe_get_content_empty_response(self):
         """_safe_get_content handles empty dict gracefully."""
         from open_agent.api.endpoints.chat import _safe_get_content
+
         assert _safe_get_content({}) == ""

@@ -1,10 +1,9 @@
 """Workspace API integration tests — CRUD endpoints."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
-
 from open_agent.models.workspace import WorkspaceInfo
 
 
@@ -12,17 +11,22 @@ from open_agent.models.workspace import WorkspaceInfo
 async def workspace_client(_patch_db_factory, monkeypatch):
     """httpx.AsyncClient wired to workspace router with mocked workspace_manager."""
     import httpx
-    from httpx import ASGITransport
-
     from fastapi import FastAPI
-    from core.auth.dependencies import get_current_user
+    from httpx import ASGITransport
     from open_agent.api.endpoints import workspace as workspace_router
+
+    from core.auth.dependencies import get_current_user
 
     test_app = FastAPI()
     test_app.include_router(workspace_router.router, prefix="/api/workspace")
 
     async def _fake_current_user() -> dict:
-        return {"id": "test-user-id", "email": "test@example.com", "username": "testuser", "role": "admin"}
+        return {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "username": "testuser",
+            "role": "admin",
+        }
 
     test_app.dependency_overrides[get_current_user] = _fake_current_user
 
@@ -33,8 +37,12 @@ async def workspace_client(_patch_db_factory, monkeypatch):
 
 def _make_ws_info(id="ws-1", name="Test WS", path="/tmp/test", description="", is_active=False):
     return WorkspaceInfo(
-        id=id, name=name, path=path, description=description,
-        created_at="2024-01-01T00:00:00Z", is_active=is_active,
+        id=id,
+        name=name,
+        path=path,
+        description=description,
+        created_at="2024-01-01T00:00:00Z",
+        is_active=is_active,
     )
 
 
@@ -75,6 +83,12 @@ class TestCreateWorkspace:
             )
         assert resp.status_code == 200
         assert resp.json()["name"] == "Test WS"
+        mock_wm.create_workspace.assert_awaited_once_with(
+            "Test WS",
+            "/tmp/test",
+            "",
+            owner_user_id="test-user-id",
+        )
 
 
 class TestGetWorkspace:
@@ -104,9 +118,7 @@ class TestUpdateWorkspace:
         ws = _make_ws_info(name="Updated")
         with patch("open_agent.api.endpoints.workspace.workspace_manager") as mock_wm:
             mock_wm.update_workspace = AsyncMock(return_value=ws)
-            resp = await workspace_client.patch(
-                "/api/workspace/ws-1", json={"name": "Updated"}
-            )
+            resp = await workspace_client.patch("/api/workspace/ws-1", json={"name": "Updated"})
         assert resp.status_code == 200
 
     async def test_update_nonexistent_workspace(self, workspace_client: AsyncClient):
@@ -175,6 +187,7 @@ class TestFileTree:
     async def test_get_file_tree(self, workspace_client: AsyncClient):
         """Returns file tree for workspace."""
         from open_agent.models.workspace import FileTreeNode
+
         tree = [
             FileTreeNode(name="src", path="src", type="dir", children=[]),
             FileTreeNode(name="README.md", path="README.md", type="file", size=100),
@@ -206,6 +219,7 @@ class TestReadFile:
     async def test_read_file(self, workspace_client: AsyncClient):
         """Reads a file from workspace."""
         from open_agent.models.workspace import FileContent
+
         content = FileContent(path="main.py", content="print('hello')", total_lines=1)
         with patch("open_agent.api.endpoints.workspace.workspace_manager") as mock_wm:
             mock_wm.read_file.return_value = content
@@ -220,6 +234,7 @@ class TestReadFile:
     async def test_read_file_with_offset_limit(self, workspace_client: AsyncClient):
         """Reads a file with offset and limit."""
         from open_agent.models.workspace import FileContent
+
         content = FileContent(path="main.py", content="line 5", total_lines=10, offset=4, limit=1)
         with patch("open_agent.api.endpoints.workspace.workspace_manager") as mock_wm:
             mock_wm.read_file.return_value = content
@@ -322,7 +337,9 @@ class TestBrowseDirectory:
 
     async def test_browse_directory_selected(self, workspace_client: AsyncClient):
         """Returns path when user selects a directory."""
-        with patch("open_agent.api.endpoints.workspace._pick_directory", return_value="/home/user/project"):
+        with patch(
+            "open_agent.api.endpoints.workspace._pick_directory", return_value="/home/user/project"
+        ):
             resp = await workspace_client.post(
                 "/api/workspace/browse-directory",
                 json={"default_path": "/home/user"},
