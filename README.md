@@ -83,6 +83,8 @@ Operational references:
 
 - [docs/deployment.md](docs/deployment.md)
 - [docs/upgrade.md](docs/upgrade.md)
+- [docs/supported-scope.md](docs/supported-scope.md)
+- [docs/stabilization-policy.md](docs/stabilization-policy.md)
 
 ## Quickstart
 
