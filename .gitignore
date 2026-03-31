@@ -33,6 +33,10 @@ Thumbs.db
 .openspec/
 openspec/
 .worktrees/
+static/
+nexus_rust/*.so
+nexus_rust/*.dylib
+nexus_rust/*.pyd
 
 # Coverage
 .coverage

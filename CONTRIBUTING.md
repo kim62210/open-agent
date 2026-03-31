@@ -24,7 +24,7 @@ Changes that should usually start with an issue:
 - new storage backends
 - major agent-loop redesign
 - MCP transport redesign
-- frontend rework in the pre-built `static/` output
+- changes that require a private web UI source tree not present in this repository
 - large multi-module refactors with unclear migration paths
 
 ## Development environment
@@ -86,7 +86,7 @@ The fastest way to get oriented is to understand the main layers.
 
 | Area | Purpose |
 |---|---|
-| `server.py` | FastAPI app, lifespan, router registration, hosted pages, static serving |
+| `server.py` | FastAPI app, lifespan, router registration, hosted pages, API root handling |
 | `core/agent.py` | Agent orchestrator, workflow routing, streaming loop, tool planning |
 | `core/auth/` | JWT, password hashing, auth dependencies, RBAC, rate limiting |
 | `core/db/` | Engine, ORM models, repositories, legacy JSON migration |
@@ -94,8 +94,6 @@ The fastest way to get oriented is to understand the main layers.
 | `models/` | Pydantic request/response schemas |
 | `tests/` | Unit, integration, and auth tests |
 | `bundled_skills/` | Built-in SKILL.md skills shipped with the project |
-| `static/` | Pre-built Next.js export served by FastAPI |
-| `nexus_rust/` | Native acceleration modules and compatibility layer |
 
 ## Coding standards
 
@@ -203,12 +201,12 @@ For diagrams and system flows, use **Mermaid** in Markdown rather than static im
 
 ## Working with generated or non-source assets
 
-Two parts of the repository require extra care:
+This open-source repository intentionally excludes two internal artifact classes:
 
-- `static/` is a **pre-built frontend artifact**, not the source application.
-- `nexus_rust/` is a **native extension surface** and should not be modified casually without understanding the compatibility implications.
+- the private web UI build artifacts are not committed here
+- native `nexus_rust` acceleration binaries are not committed here; contributors should assume the Python fallback path is the supported default
 
-If a change requires the real frontend source or deep native work, call that out clearly rather than guessing.
+If a change requires the private UI source tree or unpublished native acceleration sources, call that out clearly rather than guessing.
 
 ## AI-assisted contributions
 

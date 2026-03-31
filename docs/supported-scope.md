@@ -53,7 +53,6 @@ The following route groups are part of the supported surface:
 
 ### Hosted content
 
-- static web UI export served from `static/`
 - hosted pages under `/hosted/*`
 
 ## Explicitly not supported in v1.0
@@ -73,7 +72,9 @@ The following route groups are part of the supported surface:
 
 ### Product surface
 
+- a bundled private web UI from this repository
 - frontend source-level extensibility from this repository
+- native acceleration binary distribution from this repository
 - a stable plugin marketplace or extension API
 - multi-tenant control-plane features beyond current owner-aware data access
 
@@ -97,5 +98,5 @@ The following route groups are part of the supported surface:
 ## Compatibility notes
 
 - Open Agent should be treated as a **single-process service** unless explicit future documentation says otherwise.
-- The static frontend is supported as a served artifact, not yet as an open source source tree in this repository.
+- The open-source repository does not include the private web UI build artifacts or native acceleration binaries.
 - If a deployment requires stronger guarantees than the above, it should be treated as out of scope for v1.0 rather than assumed to work.

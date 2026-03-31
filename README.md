@@ -1,6 +1,6 @@
 # Open Agent
 
-Open Agent is a local-first AI agent platform built with FastAPI, LiteLLM, MCP, and a SKILL.md-based skill system. It runs a web UI, authenticated API surface, agent runtime, MCP integrations, persistent memory, workspaces, hosted pages, and scheduled jobs inside a single Python application.
+Open Agent is a local-first AI agent platform built with FastAPI, LiteLLM, MCP, and a SKILL.md-based skill system. It runs an authenticated API surface, agent runtime, MCP integrations, persistent memory, workspaces, hosted pages, and scheduled jobs inside a single Python application.
 
 The repository is optimized for running on a developer workstation first, then scaling up to a multi-user deployment with PostgreSQL, RBAC, and structured operational controls.
 
@@ -13,7 +13,7 @@ Open Agent combines pieces that are usually split across multiple tools:
 - **A persistent agent memory model** with long-term facts and session summaries
 - **A workspace and file-operation surface** for agent-driven local automation
 - **A built-in job system** for scheduled prompts and background automation
-- **A browser-facing application** served directly from the same FastAPI server
+- **A browser-accessible hosted-pages surface** served directly from the same FastAPI server
 
 The project is intentionally local-first:
 
@@ -49,7 +49,6 @@ See `pyproject.toml`, `server.py`, and `core/db/engine.py` for the authoritative
 ```mermaid
 flowchart TB
     Browser[Browser / API Client]
-    UI[Static Next.js Export\nserved from static/]
     API[FastAPI app\nserver.py]
     Middleware[RequestLoggingMiddleware\nCORS\nslowapi limiter]
     Auth[Auth dependencies\ncore/auth/dependencies.py]
@@ -62,7 +61,6 @@ flowchart TB
     MCP[MCP servers\nstdio / SSE / streamable-http]
     LLM[LLM providers via LiteLLM]
 
-    Browser --> UI
     Browser --> API
     API --> Middleware
     Middleware --> Auth
@@ -157,7 +155,7 @@ uv run uvicorn open_agent.server:app --host 127.0.0.1 --port 4821
 
 ### 5. Verify the instance
 
-- Web UI: `http://127.0.0.1:4821`
+- API root: `http://127.0.0.1:4821`
 - Health endpoint: `GET /api/settings/health`
 - Readiness endpoint: `GET /api/settings/readiness`
 
@@ -286,8 +284,8 @@ Testing details:
 
 Open Agent is ready for external contributions, but the repo has a few important boundaries:
 
-- `static/` contains a pre-built Next.js export; the frontend source is not yet published
-- `nexus_rust/` contains Rust-backed acceleration modules and compatibility shims
+- the open-source repository does not bundle the private web UI build artifacts
+- Rust acceleration binaries are not distributed in this repository; the supported path is the Python fallback implementation
 - the runtime is highly stateful, so request isolation, DB migrations, and ownership boundaries matter
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, style rules, PR expectations, and test guidance.

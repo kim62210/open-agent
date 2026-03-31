@@ -374,9 +374,9 @@ async def handle_unified_tool_call(tool_name: str, args: dict[str, Any]) -> "str
         if tool_name == "read_file":
             return _handle_read_file(ctx, args)
         elif tool_name == "write_file":
-            return _handle_write_file(ctx, args)
+            return await _handle_write_file(ctx, args)
         elif tool_name == "edit_file":
-            return _handle_edit_file(ctx, args)
+            return await _handle_edit_file(ctx, args)
         elif tool_name == "search":
             return _handle_search(ctx, args)
         elif tool_name == "list_files":
@@ -454,7 +454,7 @@ def _handle_read_file(ctx: str, args: dict[str, Any]) -> str:
     return "Error: 활성 워크스페이스 또는 페이지가 없습니다."
 
 
-def _handle_write_file(ctx: str, args: dict[str, Any]) -> str:
+async def _handle_write_file(ctx: str, args: dict[str, Any]) -> str:
     path = args.get("path", "")
     content = args.get("content", "")
     if not path:
@@ -526,7 +526,7 @@ def _handle_write_file(ctx: str, args: dict[str, Any]) -> str:
     return "Error: 활성 워크스페이스 또는 페이지가 없습니다."
 
 
-def _handle_edit_file(ctx: str, args: dict[str, Any]) -> str:
+async def _handle_edit_file(ctx: str, args: dict[str, Any]) -> str:
     from open_agent.core.fuzzy import find_closest_match, fuzzy_find, fuzzy_replace
 
     path = args.get("path", "")

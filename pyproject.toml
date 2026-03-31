@@ -60,10 +60,10 @@ test = [
 path = "__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = [".", "nexus_rust"]
+packages = ["."]
 
 [tool.hatch.build.targets.sdist]
-include = ["**/*.py", "static/**", "bundled_skills/**", "nexus_rust/**"]
+include = ["**/*.py", "bundled_skills/**"]
 
 [tool.ruff]
 line-length = 100
@@ -95,7 +95,7 @@ markers = [
 [tool.coverage.run]
 source = ["open_agent", "core", "api", "models"]
 branch = true
-omit = ["tests/*", "nexus_rust/*", "core/db/migrate.py"]
+omit = ["tests/*", "core/db/migrate.py"]
 
 [tool.coverage.report]
 fail_under = 70
@@ -105,10 +105,6 @@ show_missing = true
 python_version = "3.13"
 strict = false
 plugins = ["pydantic.mypy"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["nexus_rust", "nexus_rust.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

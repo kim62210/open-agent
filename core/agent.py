@@ -141,9 +141,15 @@ _CACHEABLE_TOOLS = {
     "list_scheduled_tasks",
 }
 
-_HIGH_REASONING_WORKFLOWS = frozenset({
-    "debug", "impl", "coding-pipeline", "plan", "review",
-})
+_HIGH_REASONING_WORKFLOWS = frozenset(
+    {
+        "debug",
+        "impl",
+        "coding-pipeline",
+        "plan",
+        "review",
+    }
+)
 
 _SELF_ASSESSMENT_INTERVAL = 8  # 매 N 라운드마다 자기 점검 주입
 _TOOL_RESULT_COMPACT_LEN = 800  # 축소 시 도구 결과 최대 길이
@@ -158,6 +164,8 @@ def _scale_to_context(base_value: int, context_window: int) -> int:
     """기준 모델(131K) 대비 비례 스케일링. 최소값은 base_value의 50%."""
     ratio = context_window / _REFERENCE_CONTEXT_WINDOW
     return max(int(base_value * 0.5), int(base_value * ratio))
+
+
 _SELF_ASSESSMENT_PROMPT = (
     "[시스템 점검] 내부적으로 진행 상황을 점검하세요: "
     "①원래 목표 ②완료된 단계 ③남은 단계 ④접근 방식 수정 필요 여부. "
@@ -218,6 +226,7 @@ ERROR_HANDLING_PROMPT = """## 도구 오류 대응 원칙
 @dataclass
 class _RequestState:
     """Per-request mutable state — prevents singleton race conditions."""
+
     session_tools: set = field(default_factory=set)
     tool_result_cache: dict = field(default_factory=dict)
     prev_workflow: str | None = None
@@ -234,14 +243,14 @@ class AgentOrchestrator:
             items = "\n".join(f"  - `{s}`" for s in scripts)
             parts.append(
                 f"### 스크립트 (정확한 파일명)\n{items}\n"
-                f"`run_skill_script(\"{skill_name}\", \"파일명\")` 으로 실행\n"
+                f'`run_skill_script("{skill_name}", "파일명")` 으로 실행\n'
                 f"**위 목록에 없는 파일명을 추측하여 호출하지 마세요.**"
             )
         if references:
             items = "\n".join(f"  - `{r}`" for r in references)
             parts.append(
                 f"### 참조 문서\n{items}\n"
-                f"`read_skill_reference(\"{skill_name}\", \"파일명\")` 으로 참조"
+                f'`read_skill_reference("{skill_name}", "파일명")` 으로 참조'
             )
         return "\n\n".join(parts)
 
@@ -266,9 +275,7 @@ class AgentOrchestrator:
         """오래된 tool 결과 메시지를 축소하여 컨텍스트 윈도우를 절약합니다.
         마지막 keep_recent개의 tool 메시지는 원본 유지.
         """
-        tool_indices = [
-            i for i, m in enumerate(messages) if m.get("role") == "tool"
-        ]
+        tool_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
         # 축소 대상: keep_recent개를 제외한 앞쪽 tool 메시지들
         to_compact = tool_indices[:-keep_recent] if len(tool_indices) > keep_recent else []
         for idx in to_compact:
@@ -298,7 +305,9 @@ class AgentOrchestrator:
         }
 
     @staticmethod
-    def _observation_mask(messages: List[Dict[str, Any]], keep_recent_tools: int = _COMPACT_KEEP_RECENT_TOOLS) -> int:
+    def _observation_mask(
+        messages: List[Dict[str, Any]], keep_recent_tools: int = _COMPACT_KEEP_RECENT_TOOLS
+    ) -> int:
         """1단계 압축: 오래된 tool 결과를 플레이스홀더로 교체합니다.
         반환값: 절약된 문자 수
         """
@@ -311,7 +320,7 @@ class AgentOrchestrator:
                 tool_name = messages[idx].get("name", "tool")
                 # C12: 도구 인자 + 결과 첫 100자를 placeholder에 포함
                 preview = content[:100].replace("\n", " ").strip()
-                placeholder = f"[{tool_name} 완료: \"{preview}...\" ({len(content)}자 생략)]"
+                placeholder = f'[{tool_name} 완료: "{preview}..." ({len(content)}자 생략)]'
                 saved_chars += len(content) - len(placeholder)
                 messages[idx]["content"] = placeholder
         return saved_chars
@@ -376,7 +385,8 @@ class AgentOrchestrator:
             content = msg.get("content", "")
             if isinstance(content, list):
                 content = " ".join(
-                    p.get("text", "") for p in content
+                    p.get("text", "")
+                    for p in content
                     if isinstance(p, dict) and p.get("type") == "text"
                 )
             if role == "tool":
@@ -433,7 +443,9 @@ class AgentOrchestrator:
 
         logger.info(
             "Context summarized: %d messages → %d messages (summary + %d recent)",
-            len(messages), len(result), len(to_keep),
+            len(messages),
+            len(result),
+            len(to_keep),
         )
         return result
 
@@ -453,7 +465,8 @@ class AgentOrchestrator:
 
         logger.info(
             "Context usage %.1f%% exceeds threshold %.0f%%, starting compaction",
-            status["usage_ratio"] * 100, threshold * 100,
+            status["usage_ratio"] * 100,
+            threshold * 100,
         )
 
         # C8/C9: 동적 keep_recent 계산
@@ -466,8 +479,12 @@ class AgentOrchestrator:
         # 1단계: Observation Masking (비용 0)
         # Phase 2 진행 시 원본 내용이 필요하므로 마스킹 전 내용을 보존
         import copy
-        pre_mask_snapshot = [(i, messages[i].get("content", ""))
-                             for i in range(len(messages)) if messages[i].get("role") == "tool"]
+
+        pre_mask_snapshot = [
+            (i, messages[i].get("content", ""))
+            for i in range(len(messages))
+            if messages[i].get("role") == "tool"
+        ]
         saved_chars = self._observation_mask(messages, keep_recent_tools=dynamic_keep_tools)
         saved_tokens_est = saved_chars // 4
         logger.info("Phase 1 (observation masking): ~%d tokens freed", saved_tokens_est)
@@ -484,8 +501,10 @@ class AgentOrchestrator:
             return messages, compact_event
 
         # 2단계: LLM 요약 — 마스킹 전 원본 복원 후 요약 (정보 손실 방지)
-        logger.info("Phase 1 insufficient (%.1f%%), proceeding to Phase 2 (LLM summarization)",
-                     status_after_mask["usage_ratio"] * 100)
+        logger.info(
+            "Phase 1 insufficient (%.1f%%), proceeding to Phase 2 (LLM summarization)",
+            status_after_mask["usage_ratio"] * 100,
+        )
         for idx, original_content in pre_mask_snapshot:
             if idx < len(messages):
                 messages[idx]["content"] = original_content
@@ -506,7 +525,9 @@ class AgentOrchestrator:
         }
         logger.info(
             "Phase 2 complete: %d→%d messages, ~%d tokens freed, usage %.1f%%",
-            before_count, len(messages), max(0, total_freed),
+            before_count,
+            len(messages),
+            max(0, total_freed),
             status_after_summary["usage_ratio"] * 100,
         )
 
@@ -517,7 +538,9 @@ class AgentOrchestrator:
                 status_after_summary["usage_ratio"] * 100,
             )
             # C4: 적응형 Phase 3 — 남은 예산을 도구 결과 수로 균등 분배
-            tool_msgs = [m for m in messages if m.get("role") == "tool" and len(m.get("content", "")) > 800]
+            tool_msgs = [
+                m for m in messages if m.get("role") == "tool" and len(m.get("content", "")) > 800
+            ]
             num_tool_msgs = max(len(tool_msgs), 1)
             available_tokens = int(status_after_summary["context_window"] * (1 - threshold))
             phase3_limit = max(800, int(available_tokens * 2 // num_tool_msgs))  # 토큰→문자 *2
@@ -526,11 +549,14 @@ class AgentOrchestrator:
                 status_after_phase3 = self._get_context_status(messages, tools)
                 logger.info(
                     "Phase 3: truncated recent tools, ~%d chars freed, usage %.1f%%",
-                    saved, status_after_phase3["usage_ratio"] * 100,
+                    saved,
+                    status_after_phase3["usage_ratio"] * 100,
                 )
                 compact_event["phase"] = "emergency_truncation"
                 compact_event["status"] = status_after_phase3
-                compact_event["freed_tokens"] = status["used_tokens"] - status_after_phase3["used_tokens"]
+                compact_event["freed_tokens"] = (
+                    status["used_tokens"] - status_after_phase3["used_tokens"]
+                )
 
         return messages, compact_event
 
@@ -544,12 +570,13 @@ class AgentOrchestrator:
                     return content
                 if isinstance(content, list):
                     return " ".join(
-                        p.get("text", "") for p in content
+                        p.get("text", "")
+                        for p in content
                         if isinstance(p, dict) and p.get("type") == "text"
                     )
         return ""
 
-    def _build_system_prompt(
+    async def _build_system_prompt(
         self,
         user_input: str = "",
         workflow_match: Dict[str, Any] | None = None,
@@ -598,7 +625,9 @@ class AgentOrchestrator:
             # 워크플로우 매칭 시 확장 스킬 프롬프트도 함께 주입
             prioritized.append((1, _SKILL_EXTENDED_PROMPT))
             prioritized.append((1, prompt))
-            logger.info("Workflow hint injected: %s (LLM routing, lazy body load)", workflow_match["name"])
+            logger.info(
+                "Workflow hint injected: %s (LLM routing, lazy body load)", workflow_match["name"]
+            )
 
         # P2: Workspace context
         workspace_prompt = get_workspace_system_prompt()
@@ -617,6 +646,7 @@ class AgentOrchestrator:
 
         # P2.5: Active page context
         from open_agent.core.page_tools import get_page_system_prompt
+
         page_prompt = get_page_system_prompt()
         if page_prompt:
             prioritized.append((2, page_prompt))
@@ -627,7 +657,9 @@ class AgentOrchestrator:
             prioritized.append((4, memory_prompt))
 
         # P5: Session summary
-        session_summary_prompt = await memory_manager.build_session_summary_prompt(user_input=user_input)
+        session_summary_prompt = await memory_manager.build_session_summary_prompt(
+            user_input=user_input
+        )
         if session_summary_prompt:
             prioritized.append((5, session_summary_prompt))
 
@@ -649,7 +681,10 @@ class AgentOrchestrator:
                 else:
                     logger.debug(
                         "System prompt budget exceeded: dropping P%d (%d chars, budget=%d, used=%d)",
-                        priority, len(text), budget, used,
+                        priority,
+                        len(text),
+                        budget,
+                        used,
                     )
         else:
             parts = [text for _, text in prioritized]
@@ -667,6 +702,7 @@ class AgentOrchestrator:
         """
         try:
             from open_agent.core.settings_manager import settings_manager
+
             context_window = self.llm.get_context_window()
             input_tokens = self.llm.count_tokens(messages, tools)
             usage_ratio = input_tokens / context_window if context_window > 0 else 1.0
@@ -681,7 +717,9 @@ class AgentOrchestrator:
             logger.warning("Failed to compute dynamic tool result limit", exc_info=exc)
             return 30_000
 
-    def _process_tool_result(self, result: str, max_chars: int = 30_000) -> tuple[str, bool]:
+    def _process_tool_result(
+        self, result: str | dict[str, Any], max_chars: int = 30_000
+    ) -> tuple[str, bool]:
         """도구 결과를 분석하여 (LLM에 전달할 내용, 성공여부)를 반환합니다."""
         result_str = str(result)
         if is_error_result(result_str):
@@ -698,7 +736,9 @@ class AgentOrchestrator:
             )
         return result_str, True
 
-    async def _build_tools(self, user_message: str = "", state: _RequestState | None = None) -> List[Dict[str, Any]]:
+    async def _build_tools(
+        self, user_message: str = "", state: _RequestState | None = None
+    ) -> List[Dict[str, Any]]:
         """Build the tool list, respecting deferred_tool_loading setting."""
         st = state or _RequestState()
         mcp_tools = await mcp_manager.get_all_tools()
@@ -706,8 +746,10 @@ class AgentOrchestrator:
         unified_tools = get_unified_tools()
         # Workspace-only extras: rename, glob (not unified)
         from open_agent.core.workspace_tools import get_workspace_extra_tools
+
         workspace_extra = get_workspace_extra_tools()
         from open_agent.core.page_tools import get_page_management_tools
+
         page_mgmt_tools = get_page_management_tools()
         job_tools = await job_manager.get_job_tools()
 
@@ -717,10 +759,22 @@ class AgentOrchestrator:
         if not deferred:
             threshold = settings_manager.llm.deferred_tool_threshold
             if threshold > 0:
-                total_count = len(mcp_tools) + len(skill_tools) + len(unified_tools) + len(workspace_extra) + len(page_mgmt_tools) + len(job_tools) + 1  # +1 for respond_directly
+                total_count = (
+                    len(mcp_tools)
+                    + len(skill_tools)
+                    + len(unified_tools)
+                    + len(workspace_extra)
+                    + len(page_mgmt_tools)
+                    + len(job_tools)
+                    + 1
+                )  # +1 for respond_directly
                 if total_count > threshold:
                     deferred = True
-                    logger.info("Auto-enabling deferred tool loading: %d tools > threshold %d", total_count, threshold)
+                    logger.info(
+                        "Auto-enabling deferred tool loading: %d tools > threshold %d",
+                        total_count,
+                        threshold,
+                    )
 
         if deferred:
             # Register all tools but only send always-on + session tools + find_tools
@@ -751,13 +805,20 @@ class AgentOrchestrator:
             summary = tool_registry.get_category_summary()
             logger.debug(
                 "Deferred tool loading: %d/%d tools active (session=%d, registry=%s)",
-                len(all_tools), len(tool_registry._entries),
-                len(st.session_tools), summary,
+                len(all_tools),
+                len(tool_registry._entries),
+                len(st.session_tools),
+                summary,
             )
         else:
             all_tools = (
-                mcp_tools + skill_tools + unified_tools + workspace_extra
-                + page_mgmt_tools + job_tools + [_RESPOND_DIRECTLY_TOOL]
+                mcp_tools
+                + skill_tools
+                + unified_tools
+                + workspace_extra
+                + page_mgmt_tools
+                + job_tools
+                + [_RESPOND_DIRECTLY_TOOL]
             )
 
         return all_tools
@@ -770,7 +831,9 @@ class AgentOrchestrator:
             st.session_tools.add(entry.name)
         return tool_registry.format_search_result(results)
 
-    async def _execute_tool_call(self, tool_call: Dict[str, Any], state: _RequestState | None = None) -> str:
+    async def _execute_tool_call(
+        self, tool_call: Dict[str, Any], state: _RequestState | None = None
+    ) -> str:
         """단일 도구 호출 실행 및 결과 반환"""
         function_name = tool_call["function"]["name"]
         arguments_str = tool_call["function"]["arguments"]
@@ -801,7 +864,9 @@ class AgentOrchestrator:
             except ValueError:
                 return f"Error: Invalid tool name format '{function_name}'"
 
-    async def _execute_tool_call_safe(self, tool_call: Dict[str, Any], state: _RequestState | None = None) -> "str | Dict[str, Any]":
+    async def _execute_tool_call_safe(
+        self, tool_call: Dict[str, Any], state: _RequestState | None = None
+    ) -> "str | Dict[str, Any]":
         """_execute_tool_call을 감싸서 예외를 문자열로 변환 + 캐시 적용"""
         st = state or _RequestState()
         function_name = tool_call["function"]["name"]
@@ -824,7 +889,11 @@ class AgentOrchestrator:
             if isinstance(result, dict) and result.get("__escalation__"):
                 return result
             # 캐시 저장 (읽기 전용 도구, 성공 시만)
-            if function_name in _CACHEABLE_TOOLS and isinstance(result, str) and not result.startswith("Error"):
+            if (
+                function_name in _CACHEABLE_TOOLS
+                and isinstance(result, str)
+                and not result.startswith("Error")
+            ):
                 st.tool_result_cache[cache_key] = result
             return result
         except Exception as e:
@@ -903,8 +972,9 @@ class AgentOrchestrator:
         # Update previous workflow in per-request state
         state.prev_workflow = workflow_match["name"] if workflow_match else None
 
-        system_prompt = self._build_system_prompt(
-            user_input=last_user_msg, workflow_match=workflow_match,
+        system_prompt = await self._build_system_prompt(
+            user_input=last_user_msg,
+            workflow_match=workflow_match,
         )
         if system_prompt:
             messages = [{"role": "system", "content": system_prompt}] + messages
@@ -916,11 +986,15 @@ class AgentOrchestrator:
             yield {"type": "workflow_activated", "skill_name": workflow_match["name"]}
 
         max_rounds = max(settings_manager.llm.max_tool_rounds, 0)  # H-10: 음수 방지
-        _tool_choice_override = None  # 빈 응답 재시도 시 다음 라운드 tool_choice 오버라이드
+        _tool_choice_override: str | dict[str, Any] | None = (
+            None  # 빈 응답 재시도 시 다음 라운드 tool_choice 오버라이드
+        )
         # Adaptive reasoning effort based on request complexity
         turn_count = sum(1 for m in messages if m.get("role") == "user")
         _effort = self._estimate_reasoning_effort(
-            last_user_msg or "", workflow_match, turn_count,
+            last_user_msg or "",
+            workflow_match,
+            turn_count,
         )
 
         # 초기 컨텍스트 상태 전송
@@ -935,7 +1009,9 @@ class AgentOrchestrator:
                 # 압축 후 상태 재전송
                 yield {"type": "context_status", **compact_event["status"]}
 
-            tool_choice = _tool_choice_override or self._resolve_tool_choice(messages, all_tools, round_num)
+            tool_choice = _tool_choice_override or self._resolve_tool_choice(
+                messages, all_tools, round_num
+            )
             _tool_choice_override = None  # 사용 후 리셋
             yield {"type": "thinking", "content": f"LLM 호출 중... (라운드 {round_num + 1})"}
 
@@ -980,28 +1056,61 @@ class AgentOrchestrator:
                     # 이전 라운드에서 이미 도구를 사용했으면 데이터 충분 → 바로 respond_directly 강제
                     has_prior_tools = any(m.get("role") == "tool" for m in messages)
                     if has_prior_tools:
-                        logger.warning("LLM returned empty after tool results on round %d, forcing respond_directly (%d/%d)", round_num, empty_retries, _MAX_EMPTY_RETRIES)
-                        yield {"type": "thinking", "content": f"빈 응답 감지, 수집된 데이터 기반 응답 생성 중... ({empty_retries}/{_MAX_EMPTY_RETRIES})"}
+                        logger.warning(
+                            "LLM returned empty after tool results on round %d, forcing respond_directly (%d/%d)",
+                            round_num,
+                            empty_retries,
+                            _MAX_EMPTY_RETRIES,
+                        )
+                        yield {
+                            "type": "thinking",
+                            "content": f"빈 응답 감지, 수집된 데이터 기반 응답 생성 중... ({empty_retries}/{_MAX_EMPTY_RETRIES})",
+                        }
                         _tool_choice_override = _FORCE_RESPOND_TOOL_CHOICE
                     elif empty_retries == 1:
                         # 도구 미사용 상태 1차: tool_choice="required" — 모델이 도구를 자율 선택
-                        logger.warning("LLM returned empty on round %d, retrying with tool_choice=required (%d/%d)", round_num, empty_retries, _MAX_EMPTY_RETRIES)
-                        yield {"type": "thinking", "content": f"빈 응답 감지, 도구 사용 필수로 재시도 중... ({empty_retries}/{_MAX_EMPTY_RETRIES})"}
+                        logger.warning(
+                            "LLM returned empty on round %d, retrying with tool_choice=required (%d/%d)",
+                            round_num,
+                            empty_retries,
+                            _MAX_EMPTY_RETRIES,
+                        )
+                        yield {
+                            "type": "thinking",
+                            "content": f"빈 응답 감지, 도구 사용 필수로 재시도 중... ({empty_retries}/{_MAX_EMPTY_RETRIES})",
+                        }
                         _tool_choice_override = "required"
                     else:
                         # 2차: respond_directly 강제
-                        logger.warning("LLM returned empty on round %d, forcing respond_directly (%d/%d)", round_num, empty_retries, _MAX_EMPTY_RETRIES)
-                        yield {"type": "thinking", "content": f"빈 응답 감지, respond_directly 강제 호출 중... ({empty_retries}/{_MAX_EMPTY_RETRIES})"}
+                        logger.warning(
+                            "LLM returned empty on round %d, forcing respond_directly (%d/%d)",
+                            round_num,
+                            empty_retries,
+                            _MAX_EMPTY_RETRIES,
+                        )
+                        yield {
+                            "type": "thinking",
+                            "content": f"빈 응답 감지, respond_directly 강제 호출 중... ({empty_retries}/{_MAX_EMPTY_RETRIES})",
+                        }
                         _tool_choice_override = _FORCE_RESPOND_TOOL_CHOICE
                     continue
 
                 # 재시도 소진 후에도 빈 응답 — 도구 결과가 있으면 도구 없이 최종 호출
                 if not content and any(m.get("role") == "tool" for m in messages):
-                    logger.warning("All empty retries exhausted with tool results present, recovery call without tools")
+                    logger.warning(
+                        "All empty retries exhausted with tool results present, recovery call without tools"
+                    )
                     yield {"type": "thinking", "content": "수집된 데이터 기반 최종 응답 생성 중..."}
-                    messages.append({"role": "user", "content": "위 도구 결과를 바탕으로 사용자의 질문에 답변해주세요."})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": "위 도구 결과를 바탕으로 사용자의 질문에 답변해주세요.",
+                        }
+                    )
                     recovery = await self.llm.chat_completion(messages, tools=None)
-                    recovery_content = (recovery["choices"][0]["message"].get("content") or "").strip()
+                    recovery_content = (
+                        recovery["choices"][0]["message"].get("content") or ""
+                    ).strip()
                     if recovery_content:
                         content = recovery_content
                         response = recovery
@@ -1018,7 +1127,11 @@ class AgentOrchestrator:
             # respond_directly 이스케이프: 텍스트 응답으로 변환하여 즉시 반환
             if len(tool_calls) == 1 and tool_calls[0]["function"]["name"] == "respond_directly":
                 try:
-                    args = json.loads(tool_calls[0]["function"]["arguments"]) if isinstance(tool_calls[0]["function"]["arguments"], str) else tool_calls[0]["function"]["arguments"]
+                    args = (
+                        json.loads(tool_calls[0]["function"]["arguments"])
+                        if isinstance(tool_calls[0]["function"]["arguments"], str)
+                        else tool_calls[0]["function"]["arguments"]
+                    )
                 except (json.JSONDecodeError, TypeError):
                     args = {}
                 direct_content = args.get("message") or ""
@@ -1026,12 +1139,22 @@ class AgentOrchestrator:
                 yield {"type": "context_status", **final_status}
                 yield {"type": "content", "content": direct_content}
                 # 메모리 추출이 작동하도록 content를 채운 합성 응답 전달
-                yield {"type": "done", "full_response": {"choices": [{"message": {"role": "assistant", "content": direct_content}}]}}
+                yield {
+                    "type": "done",
+                    "full_response": {
+                        "choices": [{"message": {"role": "assistant", "content": direct_content}}]
+                    },
+                }
                 return
 
             if round_num >= max_rounds:
-                logger.warning("Max tool call rounds (%d) reached, returning last response", max_rounds)
-                final_content = message.get("content") or "최대 도구 호출 횟수에 도달했습니다. 다시 시도해 주세요."
+                logger.warning(
+                    "Max tool call rounds (%d) reached, returning last response", max_rounds
+                )
+                final_content = (
+                    message.get("content")
+                    or "최대 도구 호출 횟수에 도달했습니다. 다시 시도해 주세요."
+                )
                 yield {"type": "content", "content": final_content}
                 yield {"type": "done", "full_response": response}
                 return
@@ -1067,12 +1190,14 @@ class AgentOrchestrator:
                         f"명령: {result['command']}\n"
                         f"오류: {result.get('stderr_preview', '')[:200]}"
                     )
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call["id"],
-                        "name": tool_call["function"]["name"],
-                        "content": llm_msg,
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "name": tool_call["function"]["name"],
+                            "content": llm_msg,
+                        }
+                    )
                     yield {
                         "type": "escalation_request",
                         "name": tool_call["function"]["name"],
@@ -1090,15 +1215,19 @@ class AgentOrchestrator:
                     # 에스컬레이션 요청 후 스트림 즉시 종료 — 프론트엔드가 승인/거부 처리
                     return
 
-                content_for_llm, success = self._process_tool_result(result, max_chars=per_tool_limit)
+                content_for_llm, success = self._process_tool_result(
+                    result, max_chars=per_tool_limit
+                )
                 if not success:
                     has_error = True
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "name": tool_call["function"]["name"],
-                    "content": content_for_llm,
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "name": tool_call["function"]["name"],
+                        "content": content_for_llm,
+                    }
+                )
                 yield {
                     "type": "tool_result",
                     "name": tool_call["function"]["name"],
@@ -1106,7 +1235,11 @@ class AgentOrchestrator:
                     "success": success,
                 }
 
-            logger.debug("Tool round %d complete, %d tool(s) executed (parallel)", round_num + 1, len(tool_calls))
+            logger.debug(
+                "Tool round %d complete, %d tool(s) executed (parallel)",
+                round_num + 1,
+                len(tool_calls),
+            )
 
             # 라운드 완료 후 컨텍스트 상태 업데이트 전송
             round_status = self._get_context_status(messages, all_tools)
@@ -1136,7 +1269,9 @@ class AgentOrchestrator:
         """Non-streaming entry point — consumes _run_core() events and returns the final result."""
         last_response: Dict[str, Any] | None = None
         async for event in self._run_core(
-            messages, skip_routing=skip_routing, forced_workflow=forced_workflow,
+            messages,
+            skip_routing=skip_routing,
+            forced_workflow=forced_workflow,
         ):
             event_type = event.get("type")
             if event_type == "done":
@@ -1146,7 +1281,9 @@ class AgentOrchestrator:
                 return {"__escalation__": True, **event}
         # Fallback if no done event was yielded
         return last_response or {
-            "choices": [{"message": {"role": "assistant", "content": "응답을 생성할 수 없습니다."}}],
+            "choices": [
+                {"message": {"role": "assistant", "content": "응답을 생성할 수 없습니다."}}
+            ],
         }
 
     async def run_stream(
@@ -1158,7 +1295,9 @@ class AgentOrchestrator:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Streaming wrapper — yields all events from _run_core()."""
         async for event in self._run_core(
-            messages, skip_routing=skip_routing, forced_workflow=forced_workflow,
+            messages,
+            skip_routing=skip_routing,
+            forced_workflow=forced_workflow,
         ):
             yield event
 

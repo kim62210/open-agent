@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Removed
+- Bundled private web UI build artifacts from the open-source repository and source distributions.
+- Native `nexus_rust` binary artifacts from the open-source repository and source distributions.
+
 ### Added
 - Ownership-aware persistence across sessions, memories, jobs, workspaces, and pages via `owner_user_id` columns and repository/manager filtering.
 - Run ledger persistence with `RunORM` and `RunEventORM`, plus `/api/runs` endpoints for run inspection.

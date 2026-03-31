@@ -9,7 +9,7 @@ The document is grounded in the current implementation under `server.py`, `core/
 Open Agent is a single-process FastAPI application that serves four roles at once:
 
 1. **authenticated API server**
-2. **browser-facing web app host**
+2. **hosted-pages web surface**
 3. **agent runtime and tool orchestrator**
 4. **stateful local platform** backed by a database and a filesystem data directory
 
@@ -18,7 +18,6 @@ Open Agent is a single-process FastAPI application that serves four roles at onc
 ```mermaid
 flowchart TB
     Client[Browser / CLI / API client]
-    Static[Static Next.js export\nstatic/]
     App[FastAPI application\nserver.py]
     Middleware[Request logging\nCORS\nRate limiting]
     Routes[HTTP routes\napi/endpoints/*]
@@ -29,7 +28,6 @@ flowchart TB
     MCP[MCP servers]
     LiteLLM[LiteLLM providers]
 
-    Client --> Static
     Client --> App
     App --> Middleware
     Middleware --> Routes
@@ -107,7 +105,7 @@ Additional server-owned routes in `server.py`:
 - `/hosted/`
 - `/hosted/{page_id}`
 - `/hosted/{page_id}/__version__`
-- static asset mount and SPA fallback routes
+- hosted page routes and API root fallback routes
 
 ## 4. Request flow
 
@@ -388,15 +386,15 @@ This currently matters for:
 
 The supervisor records task metadata, finish time, status, and failures for operational introspection.
 
-## 10. Hosted pages and static UI
+## 10. Hosted pages and application surface
 
-Open Agent serves both a private application UI and public hosted content.
+Open Agent serves public hosted content and an authenticated API surface.
 
-### UI model
+### Open-source repository surface
 
-- `static/` contains a pre-built Next.js export
-- `server.py` mounts `/_next` and static assets
-- the repository does **not** currently include the frontend source tree
+- the open-source repository does **not** include the private web UI build artifacts
+- `server.py` serves the API root directly when no bundled UI is present
+- hosted pages remain available under `/hosted/*`
 
 ### Hosted pages model
 
@@ -405,7 +403,7 @@ Open Agent serves both a private application UI and public hosted content.
 - published pages are exposed under `/hosted/*`
 - pages can be optionally password-protected via `host_password_hash`
 
-This dual-surface design is important when changing routing, auth, or static serving logic.
+This routing split is important when changing API root handling, hosted pages, or auth boundaries.
 
 ## 11. Contributor caveats
 
@@ -413,7 +411,7 @@ These details are easy to miss if you only skim the repository:
 
 1. The repository directory name (`local-agent`) differs from the Python package import path (`open_agent`).
 2. `tests/conftest.py` sets up `sys.modules` aliasing to make that work in tests.
-3. The frontend source is not included, only the built static export.
+3. The private web UI is not included in this repository.
 4. Startup still contains legacy migration behavior because the project is mid-transition from JSON persistence to a fully database-backed model.
 5. Several subsystems are singletons; mutation paths rely on locks and request-state isolation to stay safe under concurrent access.
 

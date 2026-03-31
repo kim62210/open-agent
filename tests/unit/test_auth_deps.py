@@ -2,6 +2,7 @@
 
 import hashlib
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -100,12 +101,16 @@ async def seed_api_key(deps_factory, seed_user):
 class TestGetCurrentUser:
     """get_current_user dependency."""
 
+    @staticmethod
+    def _request():
+        return SimpleNamespace(state=SimpleNamespace())
+
     async def test_no_credentials_raises_401(self):
         """No token or API key raises 401."""
         from core.auth.dependencies import get_current_user
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(token=None, api_key=None)
+            await get_current_user(request=self._request(), token=None, api_key=None)
         assert exc_info.value.status_code == 401
 
     async def test_jwt_takes_precedence_over_api_key(self):
@@ -116,20 +121,27 @@ class TestGetCurrentUser:
         with patch(
             "core.auth.dependencies._validate_jwt", new_callable=AsyncMock, return_value=jwt_user
         ):
-            result = await get_current_user(token="jwt-token", api_key="oa-key")
+            result = await get_current_user(
+                request=self._request(), token="jwt-token", api_key="oa-key"
+            )
         assert result["id"] == "jwt-user"
 
     async def test_api_key_used_when_no_jwt(self):
         """When no JWT but API key is present, API key path is used."""
         from core.auth.dependencies import get_current_user
 
-        api_user = {"id": "api-user", "email": "api@test.com", "username": "apiuser", "role": "user"}
+        api_user = {
+            "id": "api-user",
+            "email": "api@test.com",
+            "username": "apiuser",
+            "role": "user",
+        }
         with patch(
             "core.auth.dependencies._validate_api_key",
             new_callable=AsyncMock,
             return_value=api_user,
         ):
-            result = await get_current_user(token=None, api_key="oa-key")
+            result = await get_current_user(request=self._request(), token=None, api_key="oa-key")
         assert result["id"] == "api-user"
 
 
@@ -159,9 +171,7 @@ class TestValidateJWT:
         with patch("core.auth.dependencies.async_session_factory") as mock_factory:
             # decode_token is called before session, so it will fail first
             expired_token = "expired.token.here"
-            with patch(
-                "core.auth.jwt.decode_token", side_effect=pyjwt.ExpiredSignatureError
-            ):
+            with patch("core.auth.jwt.decode_token", side_effect=pyjwt.ExpiredSignatureError):
                 with pytest.raises(HTTPException) as exc_info:
                     await _validate_jwt(expired_token)
                 assert exc_info.value.status_code == 401
@@ -194,9 +204,7 @@ class TestValidateJWT:
         """Token without sub claim raises 401."""
         from core.auth.dependencies import _validate_jwt
 
-        with patch(
-            "core.auth.jwt.decode_token", return_value={"type": "access"}
-        ):
+        with patch("core.auth.jwt.decode_token", return_value={"type": "access"}):
             with pytest.raises(HTTPException) as exc_info:
                 await _validate_jwt("no-sub-token")
             assert exc_info.value.status_code == 401
